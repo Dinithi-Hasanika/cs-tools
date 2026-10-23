@@ -34,6 +34,7 @@ import {
   Headset,
   HeartPulse,
   KeyRound,
+  LayoutDashboard,
   LifeBuoy,
   Megaphone,
   RefreshCw,
@@ -205,6 +206,36 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     label: "Announcements",
     href: "/announcements",
     icon: Megaphone,
+  },
+  {
+    // User-made dashboards, apart from Dashboard (the landing page, unchanged).
+    // CS engineers and admins for now (canWrite is exactly that group); set on
+    // the section so both pages inherit it. Children are route-backed tabs, the
+    // PLG shape: `tab` makes the rail show them as a dropdown, `routes` gives
+    // each a real path.
+    id: "custom-dashboards",
+    label: "Custom Dashboards",
+    href: "/custom-dashboards/my",
+    requires: "canWrite",
+    icon: LayoutDashboard,
+    children: [
+      {
+        id: "custom-dashboards.my",
+        tab: "my",
+        label: "My Dashboards",
+        href: "/custom-dashboards/my",
+        routes: ["/custom-dashboards/my"],
+        icon: LayoutDashboard,
+      },
+      {
+        id: "custom-dashboards.shared",
+        tab: "shared",
+        label: "Shared Dashboards",
+        href: "/custom-dashboards/shared",
+        routes: ["/custom-dashboards/shared"],
+        icon: UsersRound,
+      },
+    ],
   },
   {
     id: "security-center",

@@ -65,6 +65,10 @@ import { useAppMountedSignal } from "@utils/appMountedEvent";
  * already eager (tiny, immediate fallbacks) and are unaffected.
  */
 import CsmDashboardPage from "@features/csm-dashboard/pages/CsmDashboardPage";
+import MyDashboardsPage from "@features/csm-custom-dashboards/pages/MyDashboardsPage";
+import SharedDashboardsPage from "@features/csm-custom-dashboards/pages/SharedDashboardsPage";
+import GenerateDashboardPage from "@features/csm-custom-dashboards/pages/GenerateDashboardPage";
+import GenerateCodeDashboardPage from "@features/csm-custom-dashboards/pages/GenerateCodeDashboardPage";
 import CsMonitorDashboardPage from "@features/csm-dashboard/pages/CsMonitorDashboardPage";
 import DashboardWidgetPreviewPage from "@features/csm-dashboard/pages/DashboardWidgetPreviewPage";
 import CsmCasesPage from "@features/csm-cases/pages/CsmCasesPage";
@@ -461,6 +465,18 @@ export default function App(): JSX.Element {
                     path="dashboard/:dashboardId/:teamId"
                     element={<CsmDashboardPage />}
                   />
+                  {/* Custom Dashboards: user-made dashboards, separate from
+                      Dashboard above. Who may open them is the nav section's
+                      `requires`, applied by FeatureRouteGuard. */}
+                  <Route path="custom-dashboards">
+                    <Route index element={<Navigate to="my" replace />} />
+                    <Route path="my" element={<MyDashboardsPage />} />
+                    {/* Static "new" outranks ":dashboardId" in React Router. */}
+                    <Route path="my/new" element={<GenerateDashboardPage />} />
+                    <Route path="my/new-code" element={<GenerateCodeDashboardPage />} />
+                    <Route path="my/:dashboardId" element={<MyDashboardsPage />} />
+                    <Route path="shared" element={<SharedDashboardsPage />} />
+                  </Route>
                   {/* Dashboard widget "View more" preview — :previewSlug is
                       one of WIDGET_RESOURCE_CONFIG's own previewSlug values
                       (e.g. "cases"), resolved back to a resourceType by

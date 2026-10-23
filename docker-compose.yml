@@ -373,6 +373,14 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:3001
       PORT: "8080"
       DASHBOARDS_DIR: ./dashboards.example
+      # Dashboard generation's model key, taken from your shell or a git-ignored
+      # .env next to this file; empty by default, which leaves generation off
+      # (the endpoint returns its sample). Never put the key in this file.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Optional gateway and model for the same calls, also from the shell or
+      # that .env (keep internal gateway addresses out of this file).
+      DASHBOARD_GENERATE_BASE_URL: ${DASHBOARD_GENERATE_BASE_URL:-}
+      DASHBOARD_GENERATE_MODEL: ${DASHBOARD_GENERATE_MODEL:-}
       # The team catalogue. Unset, every team filter returns nothing and the
       # backend warns "team registry is empty" at startup. These are the teams
       # seed-team-schedule.sql creates; the display names must match the seeded

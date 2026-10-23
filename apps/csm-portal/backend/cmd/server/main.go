@@ -33,9 +33,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/claude"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmintegration"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmnotification"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard/catalogue"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/googledrive"
@@ -100,6 +102,29 @@ func main() {
 	if err != nil {
 		slog.Error("invalid timeout configuration", "err", err)
 		os.Exit(1)
+	}
+
+	// POST /dashboards/generate's model settings. Logged without the key; an
+	// empty key leaves generation off (the endpoint keeps its sample).
+	generateCfg, err := loadGenerateConfig(os.Getenv)
+	if err != nil {
+		slog.Error("invalid dashboard generation configuration", "err", err)
+		os.Exit(1)
+	}
+	dashboardCatalogue, err := catalogue.New(generateCfg.CatalogueFile)
+	if err != nil {
+		slog.Error("invalid dashboard generation configuration", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("dashboard generation",
+		"enabled", generateCfg.Enabled(), "model", generateCfg.Model, "timeout", generateCfg.Timeout,
+		"gateway", generateCfg.GatewayHost(),
+		"catalogue", dashboardCatalogue.Origin())
+	if generateCfg.Enabled() && generateCfg.Timeout >= reqTimeouts.RESTWrite {
+		// The response would be cut off before a slow generation finishes,
+		// instead of answering 504.
+		slog.Warn("DASHBOARD_GENERATE_TIMEOUT should be shorter than REST_WRITE_TIMEOUT",
+			"generateTimeout", generateCfg.Timeout, "writeTimeout", reqTimeouts.RESTWrite)
 	}
 
 	// All upstream service clients (entity, updates, SCIM, and future notification
@@ -357,6 +382,22 @@ func main() {
 		WithGrantableRoles(grantableRoles)
 	grantableRolesHandler := handler.NewGrantableRolesHandler(grantableRoles)
 	dashboardHandler := handler.NewDashboardHandler(accessGuard)
+	// The sample generator until the model call exists; see generate_config.go.
+	// With a key, chat messages go to Claude (through the gateway when
+	// DASHBOARD_GENERATE_BASE_URL is set); without one, the sample answers.
+	dashboardGenerator := handler.NewSampleDashboardGenerator()
+	// Experimental code-based generate page: the same model settings, its own
+	// catalogue (code_catalogue.md), its own sample without a key.
+	codeDashboardGenerator := handler.NewSampleCodeDashboardGenerator()
+	if generateCfg.Enabled() {
+		claudeClient := claude.NewClient(claude.Config{APIKey: generateCfg.APIKey, BaseURL: generateCfg.BaseURL, Timeout: generateCfg.Timeout})
+		dashboardGenerator = handler.NewClaudeDashboardGenerator(
+			claudeClient, generateCfg.Model, generateCfg.Timeout, dashboardCatalogue)
+		codeDashboardGenerator = handler.NewClaudeCodeDashboardGenerator(
+			claudeClient, generateCfg.Model, generateCfg.Timeout, catalogue.CodeSource{})
+	}
+	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator)
+	dashboardGenerateCodeHandler := handler.NewDashboardGenerateCodeHandler(codeDashboardGenerator)
 	caseHandler = caseHandler.WithAccessGuard(accessGuard)
 	projectHandler = projectHandler.WithAccessGuard(accessGuard)
 	timeCardHandler = timeCardHandler.WithAccessGuard(accessGuard)
@@ -459,6 +500,12 @@ func main() {
 	route("GET /dashboards/filter-presets", handler.PermView, dashboardHandler.GetFilterPresets)
 	route("GET /dashboards/sections", handler.PermView, dashboardHandler.GetSharedSections)
 	route("GET /dashboards/{dashboardId}", handler.PermView, dashboardHandler.GetDashboardDetail)
+	// Custom Dashboards' generate page. PermWrite (cs_engineer, admin) matches
+	// the webapp's `canWrite` on that menu section. A literal path, so it never
+	// collides with the {dashboardId} wildcard, which is GET only anyway.
+	route("POST /dashboards/generate", handler.PermWrite, dashboardGenerateHandler.GenerateDashboard)
+	// Experimental: the code-based counterpart, same permission.
+	route("POST /dashboards/generate-code", handler.PermWrite, dashboardGenerateCodeHandler.GenerateCodeDashboard)
 	route("GET /updates/product-update-levels", handler.PermTimeCardsAndUpdates, updatesHandler.GetProductUpdateLevels)
 	route("POST /updates/levels/search", handler.PermTimeCardsAndUpdates, updatesHandler.SearchUpdatesBetweenUpdateLevels)
 	route("GET /users/me", handler.PermAuthenticated, usersHandler.GetMe)

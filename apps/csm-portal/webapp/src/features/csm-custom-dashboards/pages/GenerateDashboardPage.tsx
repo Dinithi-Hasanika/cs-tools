@@ -57,14 +57,25 @@ const MY_DASHBOARDS_PATH = "/dashboard/my";
  * guarded: this app's router is not a data router, so `useBlocker` is not
  * available.
  *
+ * Editing a saved dashboard (`initialDashboard`, from EditCustomDashboardPage)
+ * starts with it as the draft: the first message is a change to it, Save
+ * replaces it in place (same id), and Back returns to it. Until a message
+ * changes it there is nothing to save or lose.
+ *
  * Back names its destination because this page is only ever opened from My
  * Dashboards (the webapp CLAUDE.md's fixed-destination exception).
  */
-export default function GenerateDashboardPage(): JSX.Element {
+export default function GenerateDashboardPage({
+  initialDashboard,
+}: {
+  /** The saved dashboard being edited; absent for a new one. */
+  initialDashboard?: BeDashboard;
+} = {}): JSX.Element {
   const navigate = useNavigate();
+  const editing = initialDashboard !== undefined;
   const [messages, setMessages] = useState<GenerateChatMessage[]>([]);
   const [chatOpen, setChatOpen] = useState(true);
-  const [draft, setDraft] = useState<BeDashboard | null>(null);
+  const [draft, setDraft] = useState<BeDashboard | null>(initialDashboard ?? null);
   const [busy, setBusy] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const generate = useGenerateDashboard();
@@ -72,20 +83,25 @@ export default function GenerateDashboardPage(): JSX.Element {
   const { showSuccess } = useSuccessBanner();
   const { showError } = useErrorBanner();
 
-  const hasWork = draft !== null || messages.length > 0;
+  // Editing starts with the saved dashboard as the draft: only a change to it,
+  // or a message, is something to save or lose.
+  const unchanged = editing && draft === initialDashboard;
+  const hasWork = editing ? !unchanged || messages.length > 0 : draft !== null || messages.length > 0;
 
   const handleSave = async (): Promise<void> => {
     if (!draft) return;
     try {
       const saved = await save.mutateAsync(draft);
-      showSuccess(`"${draft.displayName}" was saved to My Dashboards.`);
+      showSuccess(
+        editing ? `"${draft.displayName}" was updated.` : `"${draft.displayName}" was saved to My Dashboards.`,
+      );
       void navigate(`${MY_DASHBOARDS_PATH}/${encodeURIComponent(saved.dashboard.id)}`);
     } catch (err) {
       showError(saveErrorMessage(err, draft.displayName), err);
     }
   };
   const leave = (): void => {
-    void navigate(MY_DASHBOARDS_PATH);
+    void navigate(editing ? `${MY_DASHBOARDS_PATH}/${encodeURIComponent(initialDashboard.id)}` : MY_DASHBOARDS_PATH);
   };
   const requestLeave = (): void => {
     if (hasWork) setConfirmDiscardOpen(true);
@@ -127,7 +143,7 @@ export default function GenerateDashboardPage(): JSX.Element {
         Back to My Dashboards
       </Button>
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
-        <Typography variant="h5">New dashboard</Typography>
+        <Typography variant="h5">{editing ? "Edit dashboard" : "New dashboard"}</Typography>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {!chatOpen && (
             <Button
@@ -146,7 +162,7 @@ export default function GenerateDashboardPage(): JSX.Element {
             variant="contained"
             color="primary"
             size="small"
-            disabled={!draft || busy || save.isPending}
+            disabled={!draft || busy || save.isPending || unchanged}
             onClick={() => void handleSave()}
           >
             {save.isPending ? "Saving…" : "Save"}
@@ -222,6 +238,7 @@ export default function GenerateDashboardPage(): JSX.Element {
               onSend={(text) => void handleSend(text)}
               onClose={() => setChatOpen(false)}
               busy={busy}
+              editing={editing}
             />
           </Box>
         )}
@@ -231,6 +248,7 @@ export default function GenerateDashboardPage(): JSX.Element {
         open={confirmDiscardOpen}
         onCancel={() => setConfirmDiscardOpen(false)}
         onConfirm={leave}
+        editing={editing}
       />
     </Box>
   );

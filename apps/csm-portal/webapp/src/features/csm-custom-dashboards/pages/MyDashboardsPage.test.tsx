@@ -72,6 +72,7 @@ function renderAt(path: string) {
         <Route path="/dashboard/my" element={<MyDashboardsPage />} />
         <Route path="/dashboard/my/:dashboardId" element={<MyDashboardsPage />} />
         <Route path="/dashboard/my/new" element={<div>Generate page</div>} />
+        <Route path="/dashboard/my/:dashboardId/edit" element={<div>Edit page</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -138,6 +139,12 @@ describe("MyDashboardsPage", () => {
     listState = { isError: true };
     renderAt("/dashboard/my");
     expect(screen.getByText("Could not load the dashboard list.")).toBeInTheDocument();
+  });
+
+  it("Edit with AI opens the open dashboard's edit page", () => {
+    renderAt(`/dashboard/my/${B.id}`);
+    fireEvent.click(screen.getByRole("button", { name: "Edit with AI" }));
+    expect(screen.getByText("Edit page")).toBeInTheDocument();
   });
 
   describe("Delete, from the switcher's entries", () => {

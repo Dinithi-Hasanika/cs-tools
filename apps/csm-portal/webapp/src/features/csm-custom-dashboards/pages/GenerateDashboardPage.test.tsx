@@ -60,11 +60,11 @@ function OpenedDashboard() {
   return <div>Opened {dashboardId}</div>;
 }
 
-function renderPage() {
+function renderPage(initialDashboard?: BeDashboard) {
   render(
     <MemoryRouter initialEntries={["/dashboard/my/new"]}>
       <Routes>
-        <Route path="/dashboard/my/new" element={<GenerateDashboardPage />} />
+        <Route path="/dashboard/my/new" element={<GenerateDashboardPage initialDashboard={initialDashboard} />} />
         <Route path="/dashboard/my/:dashboardId" element={<OpenedDashboard />} />
       </Routes>
     </MemoryRouter>,
@@ -129,5 +129,57 @@ describe("GenerateDashboardPage: Save", () => {
     savePending = true;
     renderPage();
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+  });
+});
+
+describe("GenerateDashboardPage: editing a saved dashboard", () => {
+  beforeEach(() => {
+    generateMock.mockReset();
+    saveMock.mockReset();
+    showSuccess.mockReset();
+    showError.mockReset();
+    savePending = false;
+  });
+
+  it("starts from the saved dashboard, with nothing to save yet", () => {
+    renderPage(dashboard("My Cases"));
+    expect(screen.getByRole("heading", { name: "Edit dashboard" })).toBeInTheDocument();
+    expect(screen.getByText("Preview")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    // No example prompts for an existing dashboard.
+    expect(screen.queryByText("My open cases by severity")).not.toBeInTheDocument();
+  });
+
+  it("sends the saved dashboard with the first message, and saves the change in place", async () => {
+    const saved = dashboard("My Cases");
+    const changed = { ...dashboard("My Open Cases"), id: saved.id };
+    generateMock.mockResolvedValueOnce({ dashboard: changed, reply: "Changed." });
+    saveMock.mockResolvedValue({ dashboard: changed, createdOn: "a", updatedOn: "b" });
+    renderPage(saved);
+
+    await sendMessage("Only open ones", "Changed.");
+    expect(generateMock).toHaveBeenCalledWith("Only open ones", saved);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(`Opened ${saved.id}`)).toBeInTheDocument();
+    expect(saveMock).toHaveBeenCalledWith(changed);
+    expect(showSuccess).toHaveBeenCalledWith('"My Open Cases" was updated.');
+  });
+
+  it("goes back to the dashboard without asking when nothing changed", () => {
+    const saved = dashboard("My Cases");
+    renderPage(saved);
+    fireEvent.click(screen.getByRole("button", { name: "Back to My Dashboards" }));
+    expect(screen.getByText(`Opened ${saved.id}`)).toBeInTheDocument();
+  });
+
+  it("asks before dropping a change, saying the saved dashboard stays", async () => {
+    generateMock.mockResolvedValueOnce({ dashboard: dashboard("My Open Cases"), reply: "Changed." });
+    renderPage(dashboard("My Cases"));
+    await sendMessage("Only open ones", "Changed.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByText("Discard your changes?")).toBeInTheDocument();
+    expect(screen.getByText("Your changes and the chat will be lost. The saved dashboard stays as it was.")).toBeInTheDocument();
   });
 });

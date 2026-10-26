@@ -15,7 +15,7 @@
 // under the License.
 
 import { Box, Button, FormControl, IconButton, MenuItem, Select, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
-import { Code, LayoutDashboard, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
+import { Code, LayoutDashboard, Pencil, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
@@ -130,6 +130,9 @@ function SavedDashboardView({ id }: { id: string }): JSX.Element {
  * brought back. Deleting the open dashboard opens `/dashboard/my` (the first
  * one left, or the empty state); deleting another keeps the open one. A failed
  * delete shows the error banner and leaves the dashboard as it is.
+ *
+ * Edit with AI opens the open dashboard in the generate page
+ * (`/dashboard/my/:id/edit`, EditCustomDashboardPage) to change it by chat.
  */
 export default function MyDashboardsPage(): JSX.Element {
   const { dashboardId } = useParams<{ dashboardId?: string }>();
@@ -268,6 +271,14 @@ export default function MyDashboardsPage(): JSX.Element {
               ))}
             </Select>
           </FormControl>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<Pencil size={16} />}
+            onClick={() => void navigate(`${BASE_PATH}/${encodeURIComponent(selected.id)}/edit`)}
+          >
+            Edit with AI
+          </Button>
           <GenerateDashboardButton />
           {SHOW_CODE_DASHBOARD_BUTTON && <GenerateCodeDashboardButton />}
         </Box>

@@ -21,6 +21,8 @@ interface DiscardGeneratedDashboardDialogProps {
   open: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  /** Leaving an edit of a saved dashboard: only the changes are lost. */
+  editing?: boolean;
 }
 
 /**
@@ -32,13 +34,16 @@ export default function DiscardGeneratedDashboardDialog({
   open,
   onCancel,
   onConfirm,
+  editing = false,
 }: DiscardGeneratedDashboardDialogProps): JSX.Element {
   return (
     <Dialog open={open} onClose={onCancel} maxWidth="xs" fullWidth>
-      <DialogTitle>Discard this dashboard?</DialogTitle>
+      <DialogTitle>{editing ? "Discard your changes?" : "Discard this dashboard?"}</DialogTitle>
       <DialogContent>
         <Typography variant="body2">
-          The dashboard and the chat will be lost. It has not been saved, and this cannot be undone.
+          {editing
+            ? "Your changes and the chat will be lost. The saved dashboard stays as it was."
+            : "The dashboard and the chat will be lost. It has not been saved, and this cannot be undone."}
         </Typography>
       </DialogContent>
       <DialogActions>

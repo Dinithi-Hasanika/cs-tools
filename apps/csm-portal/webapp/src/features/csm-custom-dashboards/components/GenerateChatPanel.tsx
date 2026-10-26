@@ -29,6 +29,7 @@ export const GENERATE_PROMPT_MAX_LENGTH = 2000;
 
 const GREETING =
   "Describe the dashboard you'd like, and I'll build it with live data. You can ask for changes afterwards.";
+const EDIT_GREETING = "Ask for a change to this dashboard, and I'll update the preview. Save when you're happy with it.";
 
 const EXAMPLE_PROMPTS = [
   "My open cases by severity",
@@ -43,12 +44,14 @@ interface GenerateChatPanelProps {
   onClose: () => void;
   /** A reply is on its way: shows "Generating…" and blocks sending. */
   busy?: boolean;
+  /** Changing a saved dashboard: its own title and greeting, no example prompts. */
+  editing?: boolean;
 }
 
 /**
  * The chat side of the generate page: a greeting, example prompts (shown until
- * the first message; clicking one fills the box so it can be edited before
- * sending), the messages, and the input. Enter sends, Shift+Enter adds a line.
+ * the first message, and not when editing a saved dashboard; clicking one fills
+ * the box so it can be edited before sending), the messages, and the input. Enter sends, Shift+Enter adds a line.
  *
  * It only shows what it is given: the page owns the messages and decides what
  * a message does.
@@ -58,6 +61,7 @@ export default function GenerateChatPanel({
   onSend,
   onClose,
   busy = false,
+  editing = false,
 }: GenerateChatPanelProps): JSX.Element {
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -96,7 +100,7 @@ export default function GenerateChatPanel({
           justifyContent: "space-between",
         }}
       >
-        <Typography variant="subtitle1">Generate dashboard</Typography>
+        <Typography variant="subtitle1">{editing ? "Edit with AI" : "Generate dashboard"}</Typography>
         <Tooltip title="Close chat">
           <IconButton size="small" aria-label="Close chat" onClick={onClose}>
             <X size={16} />
@@ -109,8 +113,8 @@ export default function GenerateChatPanel({
         aria-label="Chat messages"
         role="log"
       >
-        <Bubble role="assistant" text={GREETING} />
-        {messages.length === 0 && (
+        <Bubble role="assistant" text={editing ? EDIT_GREETING : GREETING} />
+        {messages.length === 0 && !editing && (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
             {EXAMPLE_PROMPTS.map((prompt) => (
               <Chip key={prompt} label={prompt} size="small" variant="outlined" onClick={() => setDraft(prompt)} />
@@ -129,7 +133,7 @@ export default function GenerateChatPanel({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={messages.length === 0 ? "Describe a dashboard…" : "Ask for a change…"}
+          placeholder={messages.length === 0 && !editing ? "Describe a dashboard…" : "Ask for a change…"}
           size="small"
           fullWidth
           disabled={busy}

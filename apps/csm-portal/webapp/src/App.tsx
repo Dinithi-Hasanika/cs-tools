@@ -69,6 +69,7 @@ import CsmDashboardsLayout from "@features/csm-dashboard/pages/CsmDashboardsLayo
 import MyDashboardsPage from "@features/csm-custom-dashboards/pages/MyDashboardsPage";
 import SharedDashboardsPage from "@features/csm-custom-dashboards/pages/SharedDashboardsPage";
 import GenerateDashboardPage from "@features/csm-custom-dashboards/pages/GenerateDashboardPage";
+import EditCustomDashboardPage from "@features/csm-custom-dashboards/pages/EditCustomDashboardPage";
 import GenerateCodeDashboardPage from "@features/csm-custom-dashboards/pages/GenerateCodeDashboardPage";
 import CsMonitorDashboardPage from "@features/csm-dashboard/pages/CsMonitorDashboardPage";
 import DashboardWidgetPreviewPage from "@features/csm-dashboard/pages/DashboardWidgetPreviewPage";
@@ -481,6 +482,7 @@ export default function App(): JSX.Element {
                       strip (its Back button goes first); static "new"
                       outranks "my/:dashboardId". */}
                   <Route path="dashboard/my/new" element={<GenerateDashboardPage />} />
+                  <Route path="dashboard/my/:dashboardId/edit" element={<EditCustomDashboardPage />} />
                   <Route path="dashboard/my/new-code" element={<GenerateCodeDashboardPage />} />
                   {/* Dashboard widget "View more" preview — :previewSlug is
                       one of WIDGET_RESOURCE_CONFIG's own previewSlug values

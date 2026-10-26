@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -127,6 +128,8 @@ func TestClaudeGenerator_ReadsTheDashboard(t *testing.T) {
 		"fenced":         "```json\n" + validGenerated + "\n```",
 		"self-corrected": `{"displayName":"First try","widgets":[{"id":"x","linkResourceType":"account"}]}` + "\n\nWait, that is wrong. Corrected output:\n\n" + validGenerated,
 		"with prose":     "Here is the dashboard {as requested}:\n" + validGenerated + "\nLet me know if you want changes.",
+		"wrongly corrected": validGenerated + "\n\nWait, linkResourceType goes on the widget. Corrected:\n\n" +
+			`{"displayName":"Second try","widgets":[{"id":"x","linkResourceType":"account"}]}`,
 	}
 	for name, reply := range replies {
 		t.Run(name, func(t *testing.T) {
@@ -137,7 +140,7 @@ func TestClaudeGenerator_ReadsTheDashboard(t *testing.T) {
 				t.Fatalf("Generate: %v", err)
 			}
 			if got.Dashboard.DisplayName != "Top Customers by Open Cases" || len(got.Dashboard.Widgets) != 1 {
-				t.Fatalf("dashboard = %+v, want the (last) valid one", got.Dashboard)
+				t.Fatalf("dashboard = %+v, want the last valid one", got.Dashboard)
 			}
 			if got.Dashboard.ID != dashboard.GeneratedPlaceholderID {
 				t.Errorf("id = %q, want the placeholder (the handler sets the real one)", got.Dashboard.ID)
@@ -229,22 +232,24 @@ func TestClaudeGenerator_NoCallWithoutCatalogueOrWithABadDraft(t *testing.T) {
 	}
 }
 
-func TestLastJSONObject(t *testing.T) {
+func TestJSONObjects(t *testing.T) {
 	cases := []struct {
-		text  string
-		want  string
-		count int
+		text string
+		want []string
 	}{
-		{`{"a":1}`, `{"a":1}`, 1},
-		{`{"a":{"b":{"c":1}}}`, `{"a":{"b":{"c":1}}}`, 1},
-		{"x {not json} `{\"a\":1}` y {\"b\":2}", `{"b":2}`, 2},
-		{"no objects here", "", 0},
-		{`[{"a":1}]`, `{"a":1}`, 1},
+		{`{"a":1}`, []string{`{"a":1}`}},
+		{`{"a":{"b":{"c":1}}}`, []string{`{"a":{"b":{"c":1}}}`}},
+		{"x {not json} `{\"a\":1}` y {\"b\":2}", []string{`{"a":1}`, `{"b":2}`}},
+		{"no objects here", nil},
+		{`[{"a":1}]`, []string{`{"a":1}`}},
 	}
 	for _, tc := range cases {
-		raw, n := lastJSONObject(tc.text)
-		if string(raw) != tc.want || n != tc.count {
-			t.Errorf("lastJSONObject(%q) = %s, %d; want %s, %d", tc.text, raw, n, tc.want, tc.count)
+		var got []string
+		for _, raw := range jsonObjects(tc.text) {
+			got = append(got, string(raw))
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("jsonObjects(%q) = %q; want %q", tc.text, got, tc.want)
 		}
 	}
 }

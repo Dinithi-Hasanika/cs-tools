@@ -6,8 +6,8 @@ is everything you may use. Do not call functions, fields, operators or values th
 listed here. If the request needs something this catalogue cannot express, say so instead of
 guessing.
 
-Scope of this version: **case-family records only** (`case`, `service_request`, `engagement`,
-`security_report_analysis`, `announcement`).
+Scope of this version: **case-family records** (`case`, `service_request`, `engagement`,
+`security_report_analysis`, `announcement`), **incidents** and **change requests**.
 
 ---
 
@@ -57,8 +57,9 @@ async function render(portal, root) {
 - If a call fails it throws an `Error`; let it throw (the portal shows the message), or catch it
   and show a short message in that part of the dashboard.
 - Show "No cases" (or similar) when a list or chart has nothing in it, never an empty box.
-- Draw with the stylesheet and helpers of section 7, copied as they are.
-- Keep the code compact: **under 250 lines**, the copied stylesheet and helpers included.
+- Draw with the helpers of section 7 (the page provides them: never copy or redefine them). When the
+  request asks for a look or a chart they do not cover, draw that part yourself (section 7b).
+- Keep the code compact: **under 120 lines** with the house style, **under 250** with a custom look.
 
 ---
 
@@ -109,6 +110,99 @@ All values are strings or `null`. `createdOn` / `updatedOn` are ISO timestamps; 
 `project` and `assignee` are names. There is no description or comment text. Never compute a
 count from `items`; use `total` or `countCases`.
 
+### `portal.caseVolumeTrend({ filters, days })`
+
+How many matching records were **opened** and **closed** on each day, for a trend.
+
+| Arg | Rule |
+|---|---|
+| `filters` | Array of filters (section 5). Optional. |
+| `days` | Optional integer **1 to 90**, default 30: the trailing days, ending today (UTC). |
+
+Returns:
+
+```js
+{ days, points: [{ date, opened, closed }], totals: { opened, closed } }
+```
+
+`points` has one entry per day, oldest first; `date` is `YYYY-MM-DD`. One call covers the whole
+period: never make one call per day for a trend.
+
+### `portal.countIncidents({ filters, priorities, groupBy })`
+
+Counts the matching **incidents** (Operations records, not cases).
+
+| Arg | Rule |
+|---|---|
+| `filters` | Array of **incident** filters (section 5b). Optional. |
+| `priorities` | Optional array of `CRITICAL`, `HIGH`, `MODERATE`, `LOW`, `PLANNING` (UPPERCASE). Priority is not a filter field. |
+| `groupBy` | Optional; only `"state"`. Incidents cannot be grouped by priority: for counts per priority make one call per priority. |
+
+Returns `{ total }`, or `{ total, groups: [{ label, count }] }` with `groupBy`; group labels are
+lowercase states (`"in_progress"`).
+
+### `portal.searchIncidents({ filters, priorities, sortBy, limit })`
+
+Returns the first matching incidents, for a list or table.
+
+| Arg | Rule |
+|---|---|
+| `filters`, `priorities` | As for `countIncidents`. |
+| `sortBy` | Optional `{ field, order }`; `field` one of `openedOn`, `createdOn`, `updatedOn`; `order` default `"desc"`. |
+| `limit` | Optional integer **1 to 50**, default 10. First page only. |
+
+Returns `{ total, items }`, each item:
+
+```js
+{ id, number, subject, priority, state, category, openedOn, createdOn, updatedOn,
+  assignmentGroup, assignee }
+```
+
+`priority`, `state` and `category` are UPPERCASE (`"CRITICAL"`, `"IN_PROGRESS"`, `"SOFTWARE"`);
+`assignmentGroup` and `assignee` are names. There is no caller or description.
+
+**Incidents need Operations access.** For a viewer without it these calls fail ("403"). In a
+dashboard that mixes cases and incidents, catch an incident call's error and show "No access to
+incidents." in that card instead of failing the whole dashboard.
+
+### `portal.countChangeRequests({ states, impacts, closedFrom, closedTo, filters, groupBy, maxGroups })`
+
+Counts the matching **change requests** (Operations records).
+
+| Arg | Rule |
+|---|---|
+| `states` | Optional array of lowercase states: `new`, `assess`, `authorize`, `customer_approval`, `scheduled`, `implement`, `review`, `customer_review`, `rollback`, `closed`, `canceled` |
+| `impacts` | Optional array of `high`, `medium`, `low` |
+| `closedFrom`, `closedTo` | Optional dates (`"2026-01-01"` or an ISO timestamp) bounding when they were closed |
+| `filters` | Optional array; **only** `createdOn` (`gte` / `lte`, date tokens) and `approval` (`eq`, one of `not requested`, `requested`, `approved`, `rejected`). See section 5c. |
+| `groupBy` | Optional; one of `state`, `impact`, `category`, `risk` |
+| `maxGroups` | Optional positive integer, with `groupBy` |
+
+Returns `{ total }`, or `{ total, groups: [{ label, count }] }` with `groupBy`; labels are lowercase
+values (`"customer_approval"`, `"software"`).
+
+### `portal.searchChangeRequests({ states, impacts, closedFrom, closedTo, filters, sortBy, limit })`
+
+Returns the first matching change requests, for a list or table.
+
+| Arg | Rule |
+|---|---|
+| `states`, `impacts`, `closedFrom`, `closedTo`, `filters` | As for `countChangeRequests`. |
+| `sortBy` | Optional `{ field, order }`; `field` `createdOn` or `updatedOn`; `order` default `"desc"`. |
+| `limit` | Optional integer **1 to 50**, default 10. First page only. |
+
+Returns `{ total, items }`, each item:
+
+```js
+{ id, number, subject, type, state, impact, onHold, plannedStartOn, plannedEndOn,
+  createdOn, updatedOn, project, deployment, product, assignee, team }
+```
+
+`state` and `impact` are lowercase; `plannedStartOn` / `plannedEndOn` are ISO timestamps (or `null`);
+`onHold` is `true` / `false`; `project`, `deployment`, `product`, `assignee`, `team` are names. There is
+no description. **Change requests need Operations access**, like incidents: catch the error per card
+and show "No access to change requests."
+
 ---
 
 ## 5. Filters
@@ -150,6 +244,40 @@ Never use: ids of projects, accounts, deployments or other users; `number`; `int
 
 ---
 
+## 5b. Incident filters
+
+For `countIncidents` and `searchIncidents` only; the case filters of section 5 do not apply.
+
+| Field | Ops | Values |
+|---|---|---|
+| `state` | `in` | `NEW`, `IN_PROGRESS`, `ON_HOLD`, `RESOLVED`, `CLOSED`, `CANCELLED` (UPPERCASE; lowercase is refused) |
+| `assignedUserId` | `in` | `[me.id]` |
+| `slaViolated` | `eq` | `["true"]` or `["false"]` |
+| `madeSla` | `eq` | `["true"]` or `["false"]` |
+| `createdOn` | `gte`, `lte` | one date token (section 5) |
+
+Priority goes in the separate `priorities` argument, never in `filters`. Not available for incidents:
+product, team, assignment group or service filters, and there is no `type` filter (every record is an
+incident). "Open incidents" means `state in ["NEW", "IN_PROGRESS", "ON_HOLD"]`.
+
+---
+
+## 5c. Change request filters
+
+For `countChangeRequests` and `searchChangeRequests` only. State, impact and the closed range are their
+own arguments (`states`, `impacts`, `closedFrom`, `closedTo`); `filters` takes only:
+
+| Field | Ops | Values |
+|---|---|---|
+| `createdOn` | `gte`, `lte` | one date token (section 5) |
+| `approval` | `eq` | exactly one of `not requested`, `requested`, `approved`, `rejected` |
+
+Anything else in `filters` is refused, including "assigned to me" and assignment group: **change
+requests cannot be filtered by person or team**. "Open" / "in flight" means `states` without
+`closed`, `canceled` and `rollback`; "upcoming" means `states: ["scheduled"]`.
+
+---
+
 ## 6. House rules for reading English
 
 | Words | Means |
@@ -172,154 +300,44 @@ Never use: ids of projects, accounts, deployments or other users; `number`; `int
 | "by severity / state / type" | `countCases` with that `groupBy` |
 | "top customers", "by account" | `countCases` with `groupBy: "account"`, `maxGroups` 10 |
 | "my team's" | `CANNOT:` team dashboards are not supported here |
-| "trend", "per day" | one `countCases` per day (at most 12 days, else per week), drawn as SVG bars or a line |
+| "incidents", "outages" (as incidents), "P1 incidents" | the incident APIs (`countIncidents` / `searchIncidents`), never the case APIs; "P1" / "critical" means `priorities: ["CRITICAL"]` |
+| "open incidents", "active incidents" | `state in ["NEW", "IN_PROGRESS", "ON_HOLD"]` |
+| "incidents by priority" | one `countIncidents` per priority (5 calls), drawn with `bars(...)` |
+| "SLA-breached incidents" | `slaViolated eq ["true"]` |
+| "change requests", "changes", "CRs" | the change request APIs (`countChangeRequests` / `searchChangeRequests`) |
+| "open / in-flight changes" | `states: ["new", "assess", "authorize", "customer_approval", "scheduled", "implement", "review", "customer_review"]` |
+| "upcoming / scheduled changes" | `searchChangeRequests` with `states: ["scheduled"]`, show `plannedStartOn` |
+| "changes awaiting approval" | `filters: [{ field: "approval", op: "eq", values: ["requested"] }]` |
+| "high-impact changes" | `impacts: ["high"]` |
+| "my changes", "changes assigned to me" | `CANNOT:` change requests cannot be filtered by person |
+| "trend", "over time", "per day", "opened vs closed" | `caseVolumeTrend` (default 30 days; "last N days" sets `days`), drawn with `trend(...)` |
 
 ---
 
 ## 7. Drawing
 
-Every dashboard uses **the same stylesheet and helpers**, so they all look alike and fit the
-portal. Copy the block below into your code **as it is** (do not restyle it, rename classes or add
-other colours), then build the page with the helpers. Leave out a helper you do not use.
+The **house style** below is the default: use it whenever the request says nothing about the look,
+so ordinary dashboards look alike and fit the portal. **The page already provides its helpers** as
+global names: call them directly; never copy, rewrite or redefine them (write a helper with another
+name instead). When the request asks for something else, see 7b.
 
-```js
-const STYLE = `
-.d{color:#1d2330;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-.d *{box-sizing:border-box}
-.d-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px;margin:0 0 16px}
-.d-title{margin:0;font-size:20px;font-weight:600}
-.d-sub{margin:2px 0 0;color:#5b6474;font-size:13px}
-.d-time{color:#8a93a3;font-size:12px}
-.d-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:0 0 16px}
-.d-kpi{background:#fff;border:1px solid #e3e6ea;border-left:4px solid var(--c,#1565c0);border-radius:10px;padding:12px 16px}
-.d-kpi-label{color:#5b6474;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
-.d-kpi-value{font-size:28px;font-weight:600;line-height:1.2;margin-top:4px;font-variant-numeric:tabular-nums}
-.d-kpi-note{color:#8a93a3;font-size:12px}
-.d-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}
-.d-card{grid-column:span var(--span,6);background:#fff;border:1px solid #e3e6ea;border-radius:10px;padding:16px;box-shadow:0 1px 2px rgba(16,24,40,.04);min-width:0}
-.d-card-title{margin:0;font-size:15px;font-weight:600}
-.d-card-sub{margin:2px 0 12px;color:#8a93a3;font-size:12px}
-.d-bar{display:grid;grid-template-columns:minmax(72px,130px) 1fr auto;align-items:center;gap:10px;margin:8px 0}
-.d-bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.d-bar-track{height:10px;background:#f0f2f5;border-radius:5px;overflow:hidden}
-.d-bar-fill{height:100%;border-radius:5px}
-.d-bar-value{font-variant-numeric:tabular-nums;font-weight:600;min-width:28px;text-align:right}
-.d-scroll{overflow-x:auto}
-.d-table{width:100%;border-collapse:collapse}
-.d-table th{text-align:left;color:#5b6474;font-size:12px;font-weight:600;padding:6px 8px;border-bottom:1px solid #e3e6ea;white-space:nowrap}
-.d-table td{padding:8px;border-bottom:1px solid #f0f2f5;vertical-align:middle}
-.d-table tr:last-child td{border-bottom:0}
-.d-table tbody tr:hover{background:#f8f9fb}
-.d-nowrap{white-space:nowrap}
-.d-trunc{width:100%;max-width:0;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.d-chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap;background:#eef1f5;color:#3b4453}
-.d-empty{color:#8a93a3;text-align:center;padding:24px 8px}
-@media (max-width:760px){.d-card{grid-column:span 12}}
-`;
-const COLOURS = {
-  catastrophic: ["#7f1d1d", "#fde8e8"], critical: ["#c62828", "#fdecea"], high: ["#e65100", "#fff1e6"],
-  medium: ["#a16207", "#fef6dc"], low: ["#2e7d32", "#e9f5ea"],
-  open: ["#1565c0", "#e8f1fc"], work_in_progress: ["#6a1b9a", "#f4ebf8"], waiting_on_wso2: ["#e65100", "#fff1e6"],
-  awaiting_info: ["#00796b", "#e3f4f1"], solution_proposed: ["#00796b", "#e3f4f1"], reopened: ["#c62828", "#fdecea"],
-  closed: ["#546e7a", "#eef1f5"],
-};
-const SERIES = ["#1565c0", "#00897b", "#6a1b9a", "#e65100", "#5d4037", "#546e7a"];
+| Helper | What it does |
+|---|---|
+| `header(root, title, subtitle)` | Adds the stylesheet and the page heading (title, one-line subtitle, "Updated HH:MM"). **Call it first**; returns `page`. |
+| `kpis(page, [{ label, value, note?, colour? }])` | A row of headline-number tiles. |
+| `grid(page)` | The 12-column grid for cards; returns `g`. |
+| `card(g, title, subtitle, span)` | A card in the grid, `span` out of 12; returns the card to draw into. |
+| `bars(card, [{ label, count, colour? }], emptyText)` | Horizontal bars with the count beside each; shows `emptyText` when every count is 0. |
+| `table(card, [{ title, value: (item) => string \| Node, cls? }], items, emptyText)` | A table; `cls` is `"d-nowrap"` (numbers, dates) or `"d-trunc"` (the free-text column, cut to fit). |
+| `trend(card, points, emptyText)` | Opened (blue) vs closed (green) lines from `caseVolumeTrend`'s `points`, with totals. |
+| `chip(value)` | A coloured pill for a severity, state, priority or impact value (any case). |
+| `human(value)` | A code value for people: `"work_in_progress"` / `"IN_PROGRESS"` → "In progress"; names are left as they are. |
+| `ago(iso)` | "Today", "Yesterday", "3 days ago", or the date. |
+| `el(tag, className?, text?)` | A new element with its text set safely (`textContent`). |
+| `COLOURS` | `COLOURS[value][0]` is the colour for a lowercase severity / state / priority / impact value (`critical`, `in_progress`, `scheduled`, ...); use it for a bar or tile `colour`. |
+| `SERIES` | Six colours for other groups, in turn. |
 
-function el(tag, cls, text) {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== undefined && text !== null) n.textContent = String(text);
-  return n;
-}
-function human(v) {
-  if (!v) return "-";
-  const s = String(v).replace(/_/g, " ").replace(/\bwso2\b/gi, "WSO2");
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-function ago(iso) {
-  if (!iso) return "-";
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  return days <= 0 ? "Today" : days === 1 ? "Yesterday" : days < 30 ? days + " days ago" : new Date(iso).toLocaleDateString();
-}
-function chip(value) {
-  const c = el("span", "d-chip", human(value));
-  const pair = COLOURS[value];
-  if (pair) { c.style.color = pair[0]; c.style.background = pair[1]; }
-  return c;
-}
-function header(root, title, subtitle) {
-  const style = document.createElement("style");
-  style.textContent = STYLE;
-  root.appendChild(style);
-  const page = el("div", "d");
-  const head = el("div", "d-head");
-  const left = el("div");
-  left.appendChild(el("h2", "d-title", title));
-  if (subtitle) left.appendChild(el("p", "d-sub", subtitle));
-  head.appendChild(left);
-  head.appendChild(el("span", "d-time", "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
-  page.appendChild(head);
-  root.appendChild(page);
-  return page;
-}
-function kpis(page, items) { // items: [{ label, value, note?, colour? }]
-  const row = el("div", "d-kpis");
-  for (const k of items) {
-    const box = el("div", "d-kpi");
-    if (k.colour) box.style.setProperty("--c", k.colour);
-    box.appendChild(el("div", "d-kpi-label", k.label));
-    box.appendChild(el("div", "d-kpi-value", k.value));
-    if (k.note) box.appendChild(el("div", "d-kpi-note", k.note));
-    row.appendChild(box);
-  }
-  page.appendChild(row);
-}
-function grid(page) { const g = el("div", "d-grid"); page.appendChild(g); return g; }
-function card(g, title, subtitle, span) {
-  const c = el("section", "d-card");
-  c.style.setProperty("--span", span || 6);
-  c.appendChild(el("h3", "d-card-title", title));
-  c.appendChild(el("p", "d-card-sub", subtitle || ""));
-  g.appendChild(c);
-  return c;
-}
-function bars(c, rows, empty) { // rows: [{ label, count, colour? }]
-  if (!rows.some((r) => r.count > 0)) { c.appendChild(el("div", "d-empty", empty || "Nothing to show.")); return; }
-  const max = Math.max(...rows.map((r) => r.count));
-  rows.forEach((r, i) => {
-    const row = el("div", "d-bar");
-    row.appendChild(el("span", "d-bar-label", r.label));
-    const track = el("div", "d-bar-track");
-    const fill = el("div", "d-bar-fill");
-    fill.style.width = (r.count / max) * 100 + "%";
-    fill.style.background = r.colour || SERIES[i % SERIES.length];
-    track.appendChild(fill);
-    row.appendChild(track);
-    row.appendChild(el("span", "d-bar-value", r.count));
-    c.appendChild(row);
-  });
-}
-function table(c, columns, items, empty) { // columns: [{ title, value: (item) => string | Node, cls? }]
-  if (items.length === 0) { c.appendChild(el("div", "d-empty", empty || "Nothing to show.")); return; }
-  const t = el("table", "d-table");
-  const head = el("tr");
-  for (const col of columns) head.appendChild(el("th", null, col.title));
-  t.appendChild(el("thead")).appendChild(head);
-  const body = el("tbody");
-  for (const item of items) {
-    const tr = el("tr");
-    for (const col of columns) {
-      const td = el("td", col.cls);
-      const v = col.value(item);
-      if (v instanceof Node) td.appendChild(v); else td.textContent = v === null || v === undefined ? "-" : String(v);
-      tr.appendChild(td);
-    }
-    body.appendChild(tr);
-  }
-  t.appendChild(body);
-  c.appendChild(el("div", "d-scroll")).appendChild(t);
-}
-```
+Messages for empty or failed parts: `el("div", "d-empty", "No access to incidents.")` appended to the card.
 
 **Page layout**, always in this order:
 
@@ -336,6 +354,8 @@ function table(c, columns, items, empty) { // columns: [{ title, value: (item) =
    Fill each row: the spans of the cards in a row add up to 12, so there is no gap at the end.
 4. Every card has a title and a subtitle saying what it counts.
 
+**Trends:** `trend(...)` for `caseVolumeTrend`, in a card of span 12 (or 6 beside one other chart).
+
 **Charts:** `bars(...)` for any grouping (one row per group, biggest first unless the values have
 an order, as severity and state do). Give severity and state rows their `COLOURS` colour (the first
 of the pair). Write group labels with `human(...)`. Leave out empty groups except in a fixed order
@@ -345,20 +365,47 @@ of the pair). Write group labels with `human(...)`. Leave out empty groups excep
 (`cls: "d-trunc"`), Severity and State as `chip(...)`, and Updated or Created as `ago(...)`
 (`cls: "d-nowrap"`). Add Account or Assignee only when the request is about them.
 
-**Never:** other colours, fonts, shadows or animation; more than 6 cards; a card without a
-title; numbers shown only as colour; raw values (`work_in_progress`) on the page.
+**In the house style, avoid:** other colours, fonts, shadows or animation; more than 6 cards. **Always,
+in any style:** every panel has a title; numbers are written as text, never shown only as colour;
+values are shown for people (`human`), never raw (`work_in_progress`).
+
+## 7b. A custom look (only when the request asks for one)
+
+When the request asks for a look, layout or chart the house style does not have (for example "dark
+theme", "a donut", "a gauge", "a timeline", "a heatmap by day", "big numbers only", "compact",
+"brand colours"), build that part yourself with HTML, CSS and inline SVG. Mix freely: keep using the
+helpers where they still fit (a custom chart can sit in a `card`; a custom table can use `chip`).
+
+- **Scope your CSS.** Put your own rules in one `<style>` element inside `root`, and prefix every
+  selector with a class you put on your outermost element (e.g. `.x-dash .x-donut {...}`). Never style
+  bare tags (`body`, `table`, `h2`) or the `d-` classes, so nothing leaks into the house style.
+- **A whole-page look** (e.g. dark): give your outer element its own background and text colour, and
+  check contrast (light text on dark, at least as readable as the house style). Re-colour kit cards
+  through your own wrapper class, not by changing the `d-` rules.
+- **Charts you draw:** inline SVG, sized to its container (read `clientWidth`, as `trend` does), with
+  the label and number of every slice / bar / point written as text in the chart or a legend.
+- **Still true for a custom look:** text through `textContent` (or `el`), data only through `portal`, no
+  network, no images or fonts from outside, empty and error states handled, no animation that loops.
+- Do only what was asked: a request for "a donut" changes that chart, not the whole page.
 
 ---
 
 ## 8. Check before you answer
 
-1. Only `portal.currentUser`, `portal.countCases`, `portal.searchCases`; at most 12 calls.
+1. Only `portal.currentUser`, `portal.countCases`, `portal.searchCases`, `portal.caseVolumeTrend`,
+   `portal.countIncidents`, `portal.searchIncidents`, `portal.countChangeRequests`,
+   `portal.searchChangeRequests`; at most 12 calls. Incident filters from section 5b (UPPERCASE states,
+   priority in `priorities`); change request filters from section 5c (lowercase `states`, `impacts`,
+   only `createdOn` / `approval` in `filters`). An incident or change request call's error is caught in
+   its card.
 2. Only fields, ops and values from section 5; no literal dates, no ids except `me.id`, emails only
    `me.email` or ones the request gave; no user or team placeholders.
 3. `groupBy` one of `severity`, `state`, `type`, `account`; `sortBy.field` from section 4; `limit` 1 to 50.
 4. No network, no libraries, no `innerHTML` with record text.
-5. The section 7 block is copied unchanged at the top of the code; the page is header, then 2 to 4
-   headline numbers, then cards whose spans fill each row; charts before tables; labels via `human`.
+5. The section 7 helpers are called, never copied or redefined. With no style asked for: the house
+   style only (header, 2 to 4 headline numbers, cards whose spans fill each row, charts before tables).
+   With a custom look asked for: section 7b (one scoped `<style>`, prefixed selectors, readable
+   contrast, numbers as text). Labels via `human` in both.
 6. One sentence or two, then one complete ` ```js ` block defining `async function render(portal, root)`.
 
 ---
@@ -367,10 +414,8 @@ title; numbers shown only as colour; raw values (`work_in_progress`) on the page
 
 Request: *"Show my open cases by severity and by state, and a list of recent escalations."*
 
-The reply is the sentence, then **one** code block holding **the whole section 7 block first
-(`STYLE`, `COLOURS`, `SERIES` and the helpers this dashboard uses, unchanged)** followed by
-`render`. Only `render` is shown here, to keep this file short; a reply that leaves out the
-section 7 block does not work.
+The reply is the sentence, then **one** code block holding `render` (and any small helper of your
+own). The section 7 helpers are provided by the page, so the code just calls them.
 
 Your open cases by severity and by state, and the ten most recent escalated cases.
 

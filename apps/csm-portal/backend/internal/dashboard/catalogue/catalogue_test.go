@@ -115,3 +115,43 @@ func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line
 }
+
+// The code catalogue documents exactly the portal APIs the webapp's sandbox
+// bridge answers (READ_ONLY_ENDPOINTS in useCodeDashboardPortal.ts), each
+// with its own section.
+func TestCodeCatalogueDocumentsEveryPortalAPI(t *testing.T) {
+	text, err := CodeSource{}.Text()
+	if err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+	for _, api := range []string{"currentUser", "countCases", "searchCases", "caseVolumeTrend", "countIncidents", "searchIncidents", "countChangeRequests", "searchChangeRequests"} {
+		if !strings.Contains(text, "### `portal."+api+"(") {
+			t.Errorf("code catalogue has no section for portal.%s", api)
+		}
+	}
+	// The drawing helpers are provided by the webapp's sandbox
+	// (codeDashboardKit.ts, DASHBOARD_KIT_NAMES: the same list, change both
+	// together): the catalogue documents each one and no longer holds their
+	// code for the model to copy.
+	for _, helper := range []string{"STYLE", "COLOURS", "SERIES", "el", "human", "ago", "chip", "header", "kpis", "grid", "card", "bars", "table", "trend"} {
+		if helper != "STYLE" && !strings.Contains(text, "`"+helper) {
+			t.Errorf("code catalogue does not document the helper %s", helper)
+		}
+	}
+	for _, code := range []string{"const STYLE", "function header(", "function trend("} {
+		if strings.Contains(text, code) {
+			t.Errorf("code catalogue still holds helper code (%q) for the model to copy", code)
+		}
+	}
+	if !strings.Contains(text, "## 5b. Incident filters") {
+		t.Error("code catalogue has no incident filter section")
+	}
+	if !strings.Contains(text, "## 5c. Change request filters") {
+		t.Error("code catalogue has no change request filter section")
+	}
+	// The house style is the default, not a limit: a request for another look
+	// is drawn by the code itself (section 7b).
+	if !strings.Contains(text, "## 7b. A custom look") {
+		t.Error("code catalogue has no section allowing a custom look")
+	}
+}

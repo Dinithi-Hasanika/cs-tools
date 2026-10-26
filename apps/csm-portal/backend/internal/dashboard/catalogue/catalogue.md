@@ -165,7 +165,14 @@ or breached group, `warning` next, otherwise leave it out.
 
 `groupBy.field` must be one of `account`, `state`, `severity`, `type`. Prefer `slices` for
 `state` and `severity`; use `groupBy` for `account` ("top customers by ..."). For `account` you may
-add `"linkResourceType": "account"` so a bar opens that account. `maxGroups` 5 to 12.
+add `"linkResourceType": "account"` **inside `groupBy`** (never on the widget itself) so a bar opens
+that account:
+
+```json
+"groupBy": { "field": "account", "maxGroups": 10, "linkResourceType": "account" }
+```
+
+`maxGroups` 5 to 12.
 
 Never set both `slices` and `groupBy`.
 

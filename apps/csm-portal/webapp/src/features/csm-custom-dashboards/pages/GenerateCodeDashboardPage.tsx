@@ -15,7 +15,7 @@
 // under the License.
 
 import { Box, Button, Chip, Tab, Tabs, Typography } from "@wso2/oxygen-ui";
-import { ArrowLeft, Code, MessageSquare } from "@wso2/oxygen-ui-icons-react";
+import { ArrowLeft, Code, MessageSquare, RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { useNavigate } from "react-router";
 import { useGenerateCodeDashboard } from "@features/csm-custom-dashboards/api/useGenerateCodeDashboard";
@@ -39,7 +39,9 @@ const MY_DASHBOARDS_PATH = "/custom-dashboards/my";
  * current source; the reply is added to the chat and the returned source
  * replaces the draft. The left side has two tabs: Preview runs the source in
  * a sandboxed iframe (CodeDashboardFrame, with the viewer's real data) and
- * Code shows it as plain text. Nothing is kept after leaving the page.
+ * Code shows it as plain text. Refresh (Preview only) runs the same source
+ * again in a fresh iframe, so the dashboard reloads with current data and the
+ * model is not called. Nothing is kept after leaving the page.
  *
  * Back names its destination because this page is only ever opened from My
  * Dashboards (the webapp CLAUDE.md's fixed-destination exception).
@@ -52,6 +54,9 @@ export default function GenerateCodeDashboardPage(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [view, setView] = useState<"preview" | "code">("preview");
+  // Bumped by Refresh: a new key gives the preview a fresh iframe, so the same
+  // source runs again and its portal.* calls read current data (no model call).
+  const [runCount, setRunCount] = useState(0);
   const generate = useGenerateCodeDashboard();
 
   const hasWork = source !== null || messages.length > 0;
@@ -76,7 +81,11 @@ export default function GenerateCodeDashboardPage(): JSX.Element {
       addMessage("assistant", result.reply);
     } catch {
       // The source is left as it was, so a failed turn never loses the draft.
-      addMessage("assistant", "The dashboard cannot be generated from the input.");
+      // With a source on screen the message was a change to it, not a new dashboard.
+      addMessage(
+        "assistant",
+        source ? "This dashboard cannot be modified with your input." : "The dashboard cannot be generated from the input.",
+      );
     } finally {
       setBusy(false);
     }
@@ -133,16 +142,28 @@ export default function GenerateCodeDashboardPage(): JSX.Element {
               minHeight: 0,
             }}
           >
-            <Tabs
-              value={view}
-              onChange={(_, value: "preview" | "code") => setView(value)}
-              sx={{ borderBottom: 1, borderColor: "divider", minHeight: 0 }}
-            >
-              <Tab label="Preview" value="preview" />
-              <Tab label="Code" value="code" />
-            </Tabs>
+            <Box sx={{ display: "flex", alignItems: "center", borderBottom: 1, borderColor: "divider" }}>
+              <Tabs
+                value={view}
+                onChange={(_, value: "preview" | "code") => setView(value)}
+                sx={{ minHeight: 0, flex: 1 }}
+              >
+                <Tab label="Preview" value="preview" />
+                <Tab label="Code" value="code" />
+              </Tabs>
+              {view === "preview" && (
+                <Button
+                  variant="text"
+                  size="small"
+                  startIcon={<RefreshCw size={16} />}
+                  onClick={() => setRunCount((n) => n + 1)}
+                >
+                  Refresh
+                </Button>
+              )}
+            </Box>
             {view === "preview" ? (
-              <CodeDashboardFrame key={source} source={source} />
+              <CodeDashboardFrame key={`${runCount}:${source}`} source={source} />
             ) : (
               <Box
                 component="pre"

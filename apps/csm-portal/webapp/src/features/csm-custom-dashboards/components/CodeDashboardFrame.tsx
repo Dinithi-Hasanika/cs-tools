@@ -17,11 +17,15 @@
 import { Alert, Box } from "@wso2/oxygen-ui";
 import { type JSX, useEffect, useRef, useState } from "react";
 import { useCodeDashboardPortal } from "@features/csm-custom-dashboards/api/useCodeDashboardPortal";
+import { DASHBOARD_KIT_SOURCE } from "@features/csm-custom-dashboards/components/codeDashboardKit";
 
 /**
- * The document loaded into the iframe: an empty `#root`, a `portal` whose every
- * call is a postMessage to this page, and a runner that turns the received
- * source into its `render` function and calls it.
+ * The document loaded into the iframe: an empty `#root`, the drawing kit
+ * (codeDashboardKit: the stylesheet and helpers such as `header`, `card`,
+ * `bars`, as globals the generated code calls), a `portal` whose every call
+ * is a postMessage to this page, and a runner that turns the received source
+ * into its `render` function and calls it. Code that still defines its own
+ * copies of the helpers keeps working: its copies shadow the kit's.
  *
  * EXPERIMENTAL (POC) EXCEPTION to the webapp CLAUDE.md's "no eval, new
  * Function, or dynamic <script>" rule, agreed for the proof of concept only:
@@ -33,6 +37,7 @@ import { useCodeDashboardPortal } from "@features/csm-custom-dashboards/api/useC
 const RUNNER = `<!doctype html><html><head><meta charset="utf-8">
 <style>body{font:14px/1.45 system-ui,sans-serif;margin:12px;color:#1d2330;background:#fff}</style></head>
 <body><div id="root"></div><script>
+${DASHBOARD_KIT_SOURCE}
 let next = 0; const pending = new Map();
 const call = (fn, args) => new Promise((resolve, reject) => {
   const id = ++next; pending.set(id, { resolve, reject });

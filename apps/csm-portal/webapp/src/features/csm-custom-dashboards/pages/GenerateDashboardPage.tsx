@@ -82,7 +82,11 @@ export default function GenerateDashboardPage(): JSX.Element {
       addMessage("assistant", result.reply);
     } catch {
       // The draft is left as it was, so a failed turn never loses the preview.
-      addMessage("assistant", "The dashboard cannot be generated from the input.");
+      // With a draft on screen the message was a change to it, not a new dashboard.
+      addMessage(
+        "assistant",
+        draft ? "This dashboard cannot be modified with your input." : "The dashboard cannot be generated from the input.",
+      );
     } finally {
       setBusy(false);
     }

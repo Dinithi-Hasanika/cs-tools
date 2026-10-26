@@ -48,7 +48,12 @@ function GenerateDashboardButton(): JSX.Element {
  * (`/custom-dashboards/my/new-code`), where the model writes the dashboard as
  * code instead of a JSON definition. Shown beside GenerateDashboardButton so
  * the two approaches can be compared; removed or promoted once one is chosen.
+ * Hidden while the JSON approach ships first (phase 1): set
+ * SHOW_CODE_DASHBOARD_BUTTON to true to bring it back. The page itself stays
+ * reachable at its URL.
  */
+const SHOW_CODE_DASHBOARD_BUTTON = false;
+
 function GenerateCodeDashboardButton(): JSX.Element {
   const navigate = useNavigate();
   return (
@@ -122,7 +127,7 @@ export default function MyDashboardsPage(): JSX.Element {
           </Typography>
           <Box sx={{ mt: 2, display: "flex", gap: 1 }}>
             <GenerateDashboardButton />
-            <GenerateCodeDashboardButton />
+            {SHOW_CODE_DASHBOARD_BUTTON && <GenerateCodeDashboardButton />}
           </Box>
         </Box>
       </Box>
@@ -167,7 +172,7 @@ export default function MyDashboardsPage(): JSX.Element {
             </Select>
           </FormControl>
           <GenerateDashboardButton />
-          <GenerateCodeDashboardButton />
+          {SHOW_CODE_DASHBOARD_BUTTON && <GenerateCodeDashboardButton />}
         </Box>
       </Box>
       <AgentsLandingPagePilot dashboardId={selected.id} />

@@ -47,8 +47,8 @@ var (
 	errGenerateRefused = errors.New("model refused the request")
 	// errGenerateTruncated: the reply hit claudeMaxTokens before finishing.
 	errGenerateTruncated = errors.New("model reply was cut off")
-	// errGenerateUnusable: the reply holds no JSON object, or the last one
-	// is not a valid generated dashboard (wraps dashboard.ErrGeneratedInvalid).
+	// errGenerateUnusable: the reply holds no JSON object, or none of them
+	// is a valid generated dashboard (wraps dashboard.ErrGeneratedInvalid).
 	errGenerateUnusable = errors.New("model reply is not a usable dashboard")
 )
 
@@ -71,7 +71,7 @@ type catalogueText interface {
 // claudeDashboardGenerator asks Claude for the dashboard: the catalogue is
 // the system prompt; the user message is the prompt and, on a follow-up, the
 // draft being edited in the file format (draftToDefinition). The reply is
-// read as the last JSON object in the text (see lastJSONObject) and checked
+// read as the last valid JSON object in the text (see jsonObjects), checked
 // with dashboard.ParseGenerated, so it is held to the same rules as a
 // definition file.
 type claudeDashboardGenerator struct {
@@ -132,22 +132,33 @@ func (g *claudeDashboardGenerator) Generate(ctx context.Context, prompt string, 
 			text.WriteString(block.Text)
 		}
 	}
-	raw, found := lastJSONObject(text.String())
-	if found == 0 {
+	objects := jsonObjects(text.String())
+	if len(objects) == 0 {
 		return GeneratedDashboard{}, fmt.Errorf("%w: no JSON object in the reply", errGenerateUnusable)
 	}
-	if found > 1 {
-		slog.InfoContext(ctx, "dashboard generate: reply held several JSON objects; using the last", "count", found)
-	}
-	if reason, ok := declineReason(raw); ok {
+	if reason, ok := declineReason(objects[len(objects)-1]); ok {
 		return GeneratedDashboard{}, &generateDeclinedError{Reason: reason}
 	}
 
-	d, err := dashboard.ParseGenerated(raw)
-	if err != nil {
-		return GeneratedDashboard{}, fmt.Errorf("%w: %w", errGenerateUnusable, err)
+	// The last valid object wins: a self-correction (wrong, then right) takes
+	// the correction, and a "correction" that breaks a valid answer (right,
+	// then wrong) keeps the answer. With none valid, the last one's error.
+	var lastErr error
+	for i := len(objects) - 1; i >= 0; i-- {
+		d, err := dashboard.ParseGenerated(objects[i])
+		if err != nil {
+			if lastErr == nil {
+				lastErr = err
+			}
+			continue
+		}
+		if len(objects) > 1 {
+			slog.InfoContext(ctx, "dashboard generate: reply held several JSON objects; using the last valid one",
+				"count", len(objects), "used", i+1)
+		}
+		return GeneratedDashboard{Dashboard: d, Reply: generatedReply(d)}, nil
 	}
-	return GeneratedDashboard{Dashboard: d, Reply: generatedReply(d)}, nil
+	return GeneratedDashboard{}, fmt.Errorf("%w: %w", errGenerateUnusable, lastErr)
 }
 
 // userMessage is the prompt alone on a first message, or the draft followed
@@ -160,15 +171,13 @@ func userMessage(prompt string, draft json.RawMessage) string {
 		"\n```\n\nChange it as follows, and reply with the whole updated dashboard:\n\n" + prompt
 }
 
-// lastJSONObject returns the last top-level JSON object in text and how many
-// it found. A reply is meant to be exactly one object; this also reads one
-// wrapped in a Markdown fence, and one that is followed by prose and a
-// corrected object (the model correcting itself), taking the correction. A
-// "{" that does not start a valid object (prose) is skipped; an object's
-// own nested objects are not counted.
-func lastJSONObject(text string) (json.RawMessage, int) {
-	var last json.RawMessage
-	found := 0
+// jsonObjects returns the top-level JSON objects in text, in order. A reply
+// is meant to be exactly one object; this also reads one wrapped in a
+// Markdown fence, and several separated by prose (the model correcting
+// itself). A "{" that does not start a valid object (prose) is skipped; an
+// object's own nested objects are not counted.
+func jsonObjects(text string) []json.RawMessage {
+	var objects []json.RawMessage
 	for i := 0; i < len(text); {
 		start := strings.IndexByte(text[i:], '{')
 		if start < 0 {
@@ -181,10 +190,10 @@ func lastJSONObject(text string) (json.RawMessage, int) {
 			i = start + 1
 			continue
 		}
-		last, found = obj, found+1
+		objects = append(objects, obj)
 		i = start + int(dec.InputOffset())
 	}
-	return last, found
+	return objects
 }
 
 // declineReason reports whether raw is the catalogue's refusal shape,

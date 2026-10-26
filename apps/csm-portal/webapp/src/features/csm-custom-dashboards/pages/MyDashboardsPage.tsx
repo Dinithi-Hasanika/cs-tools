@@ -14,8 +14,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, FormControl, IconButton, MenuItem, Select, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
-import { Code, LayoutDashboard, Pencil, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
+import {
+  Box,
+  Button,
+  FormControl,
+  IconButton,
+  InputAdornment,
+  ListSubheader,
+  MenuItem,
+  Select,
+  Skeleton,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@wso2/oxygen-ui";
+import { Code, LayoutDashboard, Pencil, Plus, SearchIcon, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
@@ -131,6 +144,12 @@ function SavedDashboardView({ id }: { id: string }): JSX.Element {
  * one left, or the empty state); deleting another keeps the open one. A failed
  * delete shows the error banner and leaves the dashboard as it is.
  *
+ * The switcher's menu starts with a search box that filters the entries by
+ * name as you type (case-insensitive; the list is the user's own, at most 50,
+ * so it is filtered here, with no request). It takes focus when the menu
+ * opens and is cleared when it closes. Typing there is not the menu's own
+ * jump-to-letter, so keys stop at the box, except Escape, which closes.
+ *
  * Edit with AI opens the open dashboard in the generate page
  * (`/dashboard/my/:id/edit`, EditCustomDashboardPage) to change it by chat.
  */
@@ -143,6 +162,7 @@ export default function MyDashboardsPage(): JSX.Element {
   const { showSuccess } = useSuccessBanner();
   const { showError } = useErrorBanner();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [search, setSearch] = useState("");
   // The dashboard the delete dialog asks about. Kept after the dialog closes,
   // so its name does not vanish during the closing animation.
   const [deleteTarget, setDeleteTarget] = useState<CustomDashboardSummary | null>(null);
@@ -203,6 +223,10 @@ export default function MyDashboardsPage(): JSX.Element {
     return <Navigate to={`${BASE_PATH}/${encodeURIComponent(customDashboards[0].id)}`} replace />;
   }
 
+  const query = search.trim().toLowerCase();
+  const matches = (d: CustomDashboardSummary): boolean => !query || d.name.toLowerCase().includes(query);
+  const noMatch = query !== "" && !customDashboards.some(matches);
+
   const handleDelete = async (target: CustomDashboardSummary): Promise<void> => {
     try {
       await deleteDashboard.mutateAsync(target.id);
@@ -238,7 +262,12 @@ export default function MyDashboardsPage(): JSX.Element {
               value={selected.id}
               open={menuOpen}
               onOpen={() => setMenuOpen(true)}
-              onClose={() => setMenuOpen(false)}
+              onClose={() => {
+                setMenuOpen(false);
+                setSearch("");
+              }}
+              // The search box takes focus, not the first entry.
+              MenuProps={{ autoFocus: false, slotProps: { paper: { sx: { maxHeight: 400 } } } }}
               onChange={(e) => navigate(`${BASE_PATH}/${encodeURIComponent(e.target.value)}`)}
               // The closed field shows the name only, not the entry's delete icon.
               renderValue={() => selected.name}
@@ -246,8 +275,46 @@ export default function MyDashboardsPage(): JSX.Element {
               // lands on Select's hidden input instead.
               SelectDisplayProps={{ "aria-label": "Select dashboard" }}
             >
+              <ListSubheader sx={{ pt: 1, pb: 0.5, px: 1, bgcolor: "background.paper" }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  autoFocus
+                  placeholder="Search dashboards"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Escape") e.stopPropagation();
+                  }}
+                  slotProps={{
+                    htmlInput: { "aria-label": "Search dashboards" },
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon size={16} />
+                        </InputAdornment>
+                      ),
+                    },
+                  }}
+                />
+              </ListSubheader>
+              {noMatch && (
+                <MenuItem disabled>
+                  <Typography component="span" variant="inherit" color="text.secondary">
+                    No dashboards match &ldquo;{search.trim()}&rdquo;
+                  </Typography>
+                </MenuItem>
+              )}
               {customDashboards.map((d) => (
-                <MenuItem key={d.id} value={d.id} sx={{ justifyContent: "space-between", gap: 2 }}>
+                <MenuItem
+                  key={d.id}
+                  value={d.id}
+                  // An entry that does not match stays in the list, hidden and
+                  // skipped by the arrow keys, so the open dashboard is always
+                  // one of the Select's options.
+                  disabled={!matches(d)}
+                  sx={{ justifyContent: "space-between", gap: 2, ...(matches(d) ? {} : { display: "none" }) }}
+                >
                   <Typography component="span" variant="inherit" noWrap>
                     {d.name}
                   </Typography>

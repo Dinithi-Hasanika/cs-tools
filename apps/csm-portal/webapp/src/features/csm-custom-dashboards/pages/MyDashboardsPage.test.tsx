@@ -147,6 +147,82 @@ describe("MyDashboardsPage", () => {
     expect(screen.getByText("Edit page")).toBeInTheDocument();
   });
 
+  describe("Search in the switcher", () => {
+    const C = { id: "5e636a12-0000-4000-8000-00000000000c", name: "Customer SLA Breaches", createdOn: "x", updatedOn: "y" };
+
+    function openSwitcher() {
+      fireEvent.mouseDown(screen.getByRole("combobox", { name: "Select dashboard" }));
+      return screen.getByRole("textbox", { name: "Search dashboards" });
+    }
+
+    // The entries a user can see and pick: hidden, non-matching ones are not.
+    // MUI's Select gives every child role="option", the search row's header
+    // too (it ignores clicks on it: a header has no tabindex), so that row is
+    // left out here.
+    function visibleEntries(): string[] {
+      const box = screen.getByRole("textbox", { name: "Search dashboards" });
+      return screen
+        .getAllByRole("option")
+        .filter((o) => !o.contains(box) && o.getAttribute("aria-disabled") !== "true")
+        .map((o) => o.textContent ?? "");
+    }
+
+    beforeEach(() => {
+      listState = { data: [A, B, C] };
+    });
+
+    it("focuses the search box when the menu opens, with every dashboard listed", () => {
+      renderAt(`/dashboard/my/${A.id}`);
+      const box = openSwitcher();
+      expect(box).toHaveFocus();
+      expect(visibleEntries()).toEqual(["Alpha", "Beta", "Customer SLA Breaches"]);
+    });
+
+    it("filters by name as you type, ignoring case", () => {
+      renderAt(`/dashboard/my/${A.id}`);
+      fireEvent.change(openSwitcher(), { target: { value: "sla" } });
+      expect(visibleEntries()).toEqual(["Customer SLA Breaches"]);
+    });
+
+    it("says so when nothing matches", () => {
+      renderAt(`/dashboard/my/${A.id}`);
+      fireEvent.change(openSwitcher(), { target: { value: "zzz" } });
+      expect(visibleEntries()).toEqual([]);
+      expect(screen.getByText("No dashboards match “zzz”")).toBeInTheDocument();
+    });
+
+    it("opens a dashboard picked from the filtered list", () => {
+      renderAt(`/dashboard/my/${A.id}`);
+      fireEvent.change(openSwitcher(), { target: { value: "beta" } });
+      fireEvent.click(screen.getByRole("option", { name: /Beta/ }));
+      expect(screen.getByText("Beta", { selector: "p" })).toBeInTheDocument();
+    });
+
+    it("is not a selection: clicking it keeps the open dashboard and the menu", () => {
+      renderAt(`/dashboard/my/${A.id}`);
+      fireEvent.click(openSwitcher());
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+      expect(screen.getByText("Alpha", { selector: "p" })).toBeInTheDocument();
+    });
+
+    it("keeps typed keys in the box instead of jumping between entries", () => {
+      renderAt(`/dashboard/my/${A.id}`);
+      const box = openSwitcher();
+      fireEvent.keyDown(box, { key: "b" });
+      expect(box).toHaveFocus();
+    });
+
+    it("starts empty again the next time the menu opens", async () => {
+      renderAt(`/dashboard/my/${A.id}`);
+      fireEvent.change(openSwitcher(), { target: { value: "sla" } });
+      fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+
+      expect(openSwitcher()).toHaveValue("");
+      expect(visibleEntries()).toEqual(["Alpha", "Beta", "Customer SLA Breaches"]);
+    });
+  });
+
   describe("Delete, from the switcher's entries", () => {
     // Opens the switcher and clicks the delete icon of the named entry.
     function deleteFromMenu(name: string) {

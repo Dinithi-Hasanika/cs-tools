@@ -25,11 +25,11 @@ import GenerateChatPanel, {
   type GenerateChatMessage,
 } from "@features/csm-custom-dashboards/components/GenerateChatPanel";
 
-const MY_DASHBOARDS_PATH = "/custom-dashboards/my";
+const MY_DASHBOARDS_PATH = "/dashboard/my";
 
 /**
- * Custom Dashboards > My Dashboards > new (code)
- * (`/custom-dashboards/my/new-code`), opened by the experimental "Generate AI
+ * Dashboards > My Dashboards > new (code)
+ * (`/dashboard/my/new-code`), opened by the experimental "Generate AI
  * Code" button: the code-based counterpart of GenerateDashboardPage, where the
  * model writes the dashboard as code that will run in a sandbox and read live
  * data through a fixed set of portal APIs.

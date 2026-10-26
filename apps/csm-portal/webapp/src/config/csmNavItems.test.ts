@@ -72,7 +72,6 @@ describe("top-level nav order", () => {
       "operations",
       "engagements",
       "announcements",
-      "custom-dashboards",
       "security-center",
       "customers",
       "kb-articles",

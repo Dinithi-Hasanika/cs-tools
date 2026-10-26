@@ -14,22 +14,26 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Tooltip, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Typography } from "@wso2/oxygen-ui";
 import { ArrowLeft, LayoutDashboard, MessageSquare } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { useNavigate } from "react-router";
 import type { BeDashboard } from "@api/backend/types";
+import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
+import { useSuccessBanner } from "@context/success-banner/SuccessBannerContext";
 import DashboardWidgetGrid from "@features/csm-dashboard/components/DashboardWidgetGrid";
+import { usePutCustomDashboard } from "@features/csm-custom-dashboards/api/useCustomDashboards";
 import { useGenerateDashboard } from "@features/csm-custom-dashboards/api/useGenerateDashboard";
+import { saveErrorMessage } from "@features/csm-custom-dashboards/utils/saveErrorMessage";
 import DiscardGeneratedDashboardDialog from "@features/csm-custom-dashboards/components/DiscardGeneratedDashboardDialog";
 import GenerateChatPanel, {
   type GenerateChatMessage,
 } from "@features/csm-custom-dashboards/components/GenerateChatPanel";
 
-const MY_DASHBOARDS_PATH = "/custom-dashboards/my";
+const MY_DASHBOARDS_PATH = "/dashboard/my";
 
 /**
- * Custom Dashboards > My Dashboards > new (`/custom-dashboards/my/new`), opened
+ * Dashboards > My Dashboards > new (`/dashboard/my/new`), opened
  * by the Generate Dashboard button: the generated dashboard's preview on the
  * left, the chat with the model on the right.
  *
@@ -41,12 +45,17 @@ const MY_DASHBOARDS_PATH = "/custom-dashboards/my";
  * (its ✕) gives the preview the full width; "Open chat" brings it back with
  * the conversation intact. Nothing is kept after leaving the page.
  *
+ * Save stores the draft in My Dashboards (`usePutCustomDashboard`, under the
+ * draft's own id) and opens it there (`/dashboard/my/:id`). A refused save
+ * shows in the error banner and keeps the page as it is: a name the user
+ * already has gets its own wording, since the fix is to rename the dashboard
+ * in the chat.
+ *
  * Leaving: Back and Discard both go through `requestLeave`, which asks first
  * (DiscardGeneratedDashboardDialog) when there is anything to lose -- a draft
- * or any message -- and leaves straight away otherwise. Other ways out (the
- * menu, a refresh, closing the tab) are not guarded: this app's router is not
- * a data router, so `useBlocker` is not available. Save is shown but disabled
- * until custom dashboards can be stored.
+ * or any message -- and leaves straight away otherwise. Other ways out (the menu, a refresh, closing the tab) are not
+ * guarded: this app's router is not a data router, so `useBlocker` is not
+ * available.
  *
  * Back names its destination because this page is only ever opened from My
  * Dashboards (the webapp CLAUDE.md's fixed-destination exception).
@@ -59,8 +68,22 @@ export default function GenerateDashboardPage(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const generate = useGenerateDashboard();
+  const save = usePutCustomDashboard();
+  const { showSuccess } = useSuccessBanner();
+  const { showError } = useErrorBanner();
 
   const hasWork = draft !== null || messages.length > 0;
+
+  const handleSave = async (): Promise<void> => {
+    if (!draft) return;
+    try {
+      const saved = await save.mutateAsync(draft);
+      showSuccess(`"${draft.displayName}" was saved to My Dashboards.`);
+      void navigate(`${MY_DASHBOARDS_PATH}/${encodeURIComponent(saved.dashboard.id)}`);
+    } catch (err) {
+      showError(saveErrorMessage(err, draft.displayName), err);
+    }
+  };
   const leave = (): void => {
     void navigate(MY_DASHBOARDS_PATH);
   };
@@ -119,14 +142,15 @@ export default function GenerateDashboardPage(): JSX.Element {
           <Button variant="outlined" size="small" onClick={requestLeave}>
             Discard
           </Button>
-          {/* A disabled button fires no events, so the tooltip sits on a span. */}
-          <Tooltip title="Saving comes in a later step">
-            <span>
-              <Button variant="contained" color="primary" size="small" disabled>
-                Save
-              </Button>
-            </span>
-          </Tooltip>
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            disabled={!draft || busy || save.isPending}
+            onClick={() => void handleSave()}
+          >
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
         </Box>
       </Box>
 

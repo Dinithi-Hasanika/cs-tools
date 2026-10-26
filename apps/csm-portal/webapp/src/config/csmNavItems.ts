@@ -128,10 +128,38 @@ export interface CsmNavSection extends CsmNavNode {
  */
 export const CSM_NAV_ITEMS: CsmNavSection[] = [
   {
+    // Route-backed tabs (the Customers shape): CsmDashboardsLayout draws them.
+    // System Dashboards shares the section's own path, so it is the landing
+    // tab and owns every /dashboard/:dashboardId(/:teamId) page. My and
+    // Shared Dashboards (user-made dashboards) are for CS engineers and admins
+    // for now (canWrite is exactly that group); their static paths outrank
+    // /dashboard/:dashboardId in React Router.
     id: "dashboard",
-    label: "Dashboard",
+    label: "Dashboards",
     href: "/dashboard",
     icon: ChartColumn,
+    children: [
+      {
+        id: "dashboard.system",
+        label: "System Dashboards",
+        href: "/dashboard",
+        icon: ChartColumn,
+      },
+      {
+        id: "dashboard.my",
+        label: "My Dashboards",
+        href: "/dashboard/my",
+        requires: "canWrite",
+        icon: LayoutDashboard,
+      },
+      {
+        id: "dashboard.shared",
+        label: "Shared Dashboards",
+        href: "/dashboard/shared",
+        requires: "canWrite",
+        icon: UsersRound,
+      },
+    ],
   },
   {
     id: "support",
@@ -206,36 +234,6 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     label: "Announcements",
     href: "/announcements",
     icon: Megaphone,
-  },
-  {
-    // User-made dashboards, apart from Dashboard (the landing page, unchanged).
-    // CS engineers and admins for now (canWrite is exactly that group); set on
-    // the section so both pages inherit it. Children are route-backed tabs, the
-    // PLG shape: `tab` makes the rail show them as a dropdown, `routes` gives
-    // each a real path.
-    id: "custom-dashboards",
-    label: "Custom Dashboards",
-    href: "/custom-dashboards/my",
-    requires: "canWrite",
-    icon: LayoutDashboard,
-    children: [
-      {
-        id: "custom-dashboards.my",
-        tab: "my",
-        label: "My Dashboards",
-        href: "/custom-dashboards/my",
-        routes: ["/custom-dashboards/my"],
-        icon: LayoutDashboard,
-      },
-      {
-        id: "custom-dashboards.shared",
-        tab: "shared",
-        label: "Shared Dashboards",
-        href: "/custom-dashboards/shared",
-        routes: ["/custom-dashboards/shared"],
-        icon: UsersRound,
-      },
-    ],
   },
   {
     id: "security-center",

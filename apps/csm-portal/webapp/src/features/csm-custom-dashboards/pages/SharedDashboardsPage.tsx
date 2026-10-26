@@ -19,7 +19,7 @@ import { UsersRound } from "@wso2/oxygen-ui-icons-react";
 import { type JSX } from "react";
 
 /**
- * Custom Dashboards > Shared Dashboards (`/custom-dashboards/shared`): custom
+ * Dashboards > Shared Dashboards (`/dashboard/shared`): custom
  * dashboards other users share. Nothing can be shared yet, so the page shows
  * its empty state.
  */

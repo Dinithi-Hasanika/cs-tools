@@ -65,6 +65,7 @@ import { useAppMountedSignal } from "@utils/appMountedEvent";
  * already eager (tiny, immediate fallbacks) and are unaffected.
  */
 import CsmDashboardPage from "@features/csm-dashboard/pages/CsmDashboardPage";
+import CsmDashboardsLayout from "@features/csm-dashboard/pages/CsmDashboardsLayout";
 import MyDashboardsPage from "@features/csm-custom-dashboards/pages/MyDashboardsPage";
 import SharedDashboardsPage from "@features/csm-custom-dashboards/pages/SharedDashboardsPage";
 import GenerateDashboardPage from "@features/csm-custom-dashboards/pages/GenerateDashboardPage";
@@ -459,24 +460,28 @@ export default function App(): JSX.Element {
                       comment — so it resolves that itself and then replaces
                       the URL with the canonical one-or-two-segment path once
                       it can, rather than a synchronous route redirect here. */}
-                  <Route path="dashboard" element={<CsmDashboardPage />} />
-                  <Route path="dashboard/:dashboardId" element={<CsmDashboardPage />} />
-                  <Route
-                    path="dashboard/:dashboardId/:teamId"
-                    element={<CsmDashboardPage />}
-                  />
-                  {/* Custom Dashboards: user-made dashboards, separate from
-                      Dashboard above. Who may open them is the nav section's
-                      `requires`, applied by FeatureRouteGuard. */}
-                  <Route path="custom-dashboards">
-                    <Route index element={<Navigate to="my" replace />} />
-                    <Route path="my" element={<MyDashboardsPage />} />
-                    {/* Static "new" outranks ":dashboardId" in React Router. */}
-                    <Route path="my/new" element={<GenerateDashboardPage />} />
-                    <Route path="my/new-code" element={<GenerateCodeDashboardPage />} />
-                    <Route path="my/:dashboardId" element={<MyDashboardsPage />} />
-                    <Route path="shared" element={<SharedDashboardsPage />} />
+                  {/* The Dashboards tab strip (CsmDashboardsLayout) sits above
+                      these as a pathless layout, so every URL stays the same.
+                      The static "my"/"shared" segments outrank
+                      ":dashboardId" in React Router. Who may open My and
+                      Shared Dashboards is their nav nodes' `requires`,
+                      applied by FeatureRouteGuard. */}
+                  <Route element={<CsmDashboardsLayout />}>
+                    <Route path="dashboard" element={<CsmDashboardPage />} />
+                    <Route path="dashboard/:dashboardId" element={<CsmDashboardPage />} />
+                    <Route
+                      path="dashboard/:dashboardId/:teamId"
+                      element={<CsmDashboardPage />}
+                    />
+                    <Route path="dashboard/my" element={<MyDashboardsPage />} />
+                    <Route path="dashboard/my/:dashboardId" element={<MyDashboardsPage />} />
+                    <Route path="dashboard/shared" element={<SharedDashboardsPage />} />
                   </Route>
+                  {/* Generating a dashboard is its own page, outside the tab
+                      strip (its Back button goes first); static "new"
+                      outranks "my/:dashboardId". */}
+                  <Route path="dashboard/my/new" element={<GenerateDashboardPage />} />
+                  <Route path="dashboard/my/new-code" element={<GenerateCodeDashboardPage />} />
                   {/* Dashboard widget "View more" preview — :previewSlug is
                       one of WIDGET_RESOURCE_CONFIG's own previewSlug values
                       (e.g. "cases"), resolved back to a resourceType by

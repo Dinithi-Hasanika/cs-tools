@@ -397,6 +397,7 @@ func main() {
 			claudeClient, generateCfg.Model, generateCfg.Timeout, catalogue.CodeSource{})
 	}
 	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator)
+	customDashboardHandler := handler.NewCustomDashboardHandler(customerEntityClient)
 	dashboardGenerateCodeHandler := handler.NewDashboardGenerateCodeHandler(codeDashboardGenerator)
 	caseHandler = caseHandler.WithAccessGuard(accessGuard)
 	projectHandler = projectHandler.WithAccessGuard(accessGuard)
@@ -506,6 +507,13 @@ func main() {
 	route("POST /dashboards/generate", handler.PermWrite, dashboardGenerateHandler.GenerateDashboard)
 	// Experimental: the code-based counterpart, same permission.
 	route("POST /dashboards/generate-code", handler.PermWrite, dashboardGenerateCodeHandler.GenerateCodeDashboard)
+	// My Dashboards: the caller's own saved dashboards, stored in entity-service.
+	// Same permission as generating one. "custom" is a literal segment, so it
+	// never collides with the {dashboardId} wildcard.
+	route("GET /dashboards/custom", handler.PermWrite, customDashboardHandler.ListCustomDashboards)
+	route("GET /dashboards/custom/{id}", handler.PermWrite, customDashboardHandler.GetCustomDashboard)
+	route("PUT /dashboards/custom/{id}", handler.PermWrite, customDashboardHandler.SaveCustomDashboard)
+	route("DELETE /dashboards/custom/{id}", handler.PermWrite, customDashboardHandler.DeleteCustomDashboard)
 	route("GET /updates/product-update-levels", handler.PermTimeCardsAndUpdates, updatesHandler.GetProductUpdateLevels)
 	route("POST /updates/levels/search", handler.PermTimeCardsAndUpdates, updatesHandler.SearchUpdatesBetweenUpdateLevels)
 	route("GET /users/me", handler.PermAuthenticated, usersHandler.GetMe)

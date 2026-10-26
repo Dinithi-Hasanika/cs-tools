@@ -130,6 +130,17 @@ type SavedFilterViewService interface {
 	Reorder(ctx context.Context, req domain.ReorderSavedFilterViewRequest) (domain.SavedFilterViewList, error)
 }
 
+// CustomDashboardService is the caller's own saved custom dashboards (CSM
+// portal My Dashboards). Postgres-only; the owner is always the authenticated
+// user resolved from x-user-id-token, never a client-supplied user id, and
+// another user's dashboard is reported as not found.
+type CustomDashboardService interface {
+	List(ctx context.Context) (domain.CustomDashboardList, error)
+	Get(ctx context.Context, id string) (domain.CustomDashboard, error)
+	Save(ctx context.Context, id string, req domain.SaveCustomDashboardRequest) (domain.CustomDashboard, error)
+	Delete(ctx context.Context, id string) error
+}
+
 // RunbookService manages the alert-name to runbook catalog (Operations > Runbooks).
 type RunbookService interface {
 	List(ctx context.Context) (domain.RunbookList, error)

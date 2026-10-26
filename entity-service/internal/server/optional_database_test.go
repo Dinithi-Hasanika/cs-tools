@@ -90,6 +90,10 @@ func TestPostgresOnlyRoutesAreUnregisteredWithoutADatabase(t *testing.T) {
 		{"save saved filter views", http.MethodPatch, "/users/me/saved-filter-views", `{}`},
 		{"unsupported put saved filter views", http.MethodPut, "/users/me/saved-filter-views", `{}`},
 		{"delete saved filter views", http.MethodDelete, "/users/me/saved-filter-views?listKey=cases&name=Mine", ""},
+		{"list custom dashboards", http.MethodGet, "/users/me/dashboards", ""},
+		{"get custom dashboard", http.MethodGet, "/users/me/dashboards/5e636a12-0000-4000-8000-000000000001", ""},
+		{"save custom dashboard", http.MethodPut, "/users/me/dashboards/5e636a12-0000-4000-8000-000000000001", `{}`},
+		{"delete custom dashboard", http.MethodDelete, "/users/me/dashboards/5e636a12-0000-4000-8000-000000000001", ""},
 	}
 
 	for _, tt := range tests {

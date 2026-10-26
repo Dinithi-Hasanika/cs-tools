@@ -125,6 +125,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		)
 	}
 
+	var customDashboardHandler *handler.CustomDashboardHandler
+	if db != nil {
+		customDashboardHandler = handler.NewCustomDashboardHandler(
+			service.NewCustomDashboardService(repository.NewCustomDashboardRepository(db), userRepo),
+		)
+	}
+
 	// event_publish_failures, sla_clocks, scheduled_task_run, and
 	// alert_incident_mapping have no ServiceNow equivalent. They are
 	// Postgres-backed and registered only when a pool is available
@@ -1939,6 +1946,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("PATCH /users/me/saved-filter-views", savedFilterViewHandler.Save)
 		mux.HandleFunc("DELETE /users/me/saved-filter-views", savedFilterViewHandler.Delete)
 		mux.HandleFunc("POST /users/me/saved-filter-views/reorder", savedFilterViewHandler.Reorder)
+	}
+	if customDashboardHandler != nil {
+		// The caller's own saved dashboards (CSM portal My Dashboards).
+		mux.HandleFunc("GET /users/me/dashboards", customDashboardHandler.List)
+		mux.HandleFunc("GET /users/me/dashboards/{id}", customDashboardHandler.Get)
+		mux.HandleFunc("PUT /users/me/dashboards/{id}", customDashboardHandler.Save)
+		mux.HandleFunc("DELETE /users/me/dashboards/{id}", customDashboardHandler.Delete)
 	}
 
 	if membershipRegistrationHandler != nil {

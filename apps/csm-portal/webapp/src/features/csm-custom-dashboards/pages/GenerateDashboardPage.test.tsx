@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -65,6 +65,7 @@ function renderPage(initialDashboard?: BeDashboard) {
     <MemoryRouter initialEntries={["/dashboard/my/new"]}>
       <Routes>
         <Route path="/dashboard/my/new" element={<GenerateDashboardPage initialDashboard={initialDashboard} />} />
+        <Route path="/dashboard/my" element={<div>Opened</div>} />
         <Route path="/dashboard/my/:dashboardId" element={<OpenedDashboard />} />
       </Routes>
     </MemoryRouter>,
@@ -181,5 +182,82 @@ describe("GenerateDashboardPage: editing a saved dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(screen.getByText("Discard your changes?")).toBeInTheDocument();
     expect(screen.getByText("Your changes and the chat will be lost. The saved dashboard stays as it was.")).toBeInTheDocument();
+  });
+});
+
+describe("GenerateDashboardPage: the chat", () => {
+  beforeEach(() => {
+    generateMock.mockReset();
+    saveMock.mockReset();
+    showSuccess.mockReset();
+    showError.mockReset();
+    savePending = false;
+  });
+
+  it("shows a placeholder until the first reply, then the preview", async () => {
+    generateMock.mockResolvedValueOnce({ dashboard: dashboard("My Cases"), reply: "Here it is." });
+    renderPage();
+    expect(screen.getByText("Your dashboard will appear here")).toBeInTheDocument();
+
+    await sendMessage("My cases", "Here it is.");
+
+    expect(generateMock).toHaveBeenCalledWith("My cases", null);
+    expect(screen.getByText("Preview")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "My Cases" })).toBeInTheDocument();
+    expect(screen.queryByText("Your dashboard will appear here")).not.toBeInTheDocument();
+  });
+
+  it("says so when the first message can't be turned into a dashboard", async () => {
+    generateMock.mockRejectedValueOnce(new Error("refused"));
+    renderPage();
+
+    await sendMessage("Hello", "The dashboard cannot be generated from the input.");
+
+    expect(screen.getByText("Your dashboard will appear here")).toBeInTheDocument();
+  });
+
+  it("keeps the preview when a follow-up message fails", async () => {
+    generateMock
+      .mockResolvedValueOnce({ dashboard: dashboard("My Cases"), reply: "Here it is." })
+      .mockRejectedValueOnce(new Error("timeout"));
+    renderPage();
+    await sendMessage("My cases", "Here it is.");
+
+    await sendMessage("Make it purple", "This dashboard cannot be modified with your input.");
+
+    expect(screen.getByRole("heading", { name: "My Cases" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("closes and reopens the chat with the conversation intact", async () => {
+    generateMock.mockResolvedValueOnce({ dashboard: dashboard("My Cases"), reply: "Here it is." });
+    renderPage();
+    await sendMessage("My cases", "Here it is.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close chat" }));
+    expect(screen.queryByRole("textbox", { name: "Message" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
+    expect(screen.getByText("Here it is.")).toBeInTheDocument();
+    expect(screen.getByText("My cases")).toBeInTheDocument();
+  });
+
+  it("leaves straight away when there is nothing to lose", () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Back to My Dashboards" }));
+    expect(screen.queryByText("Discard this dashboard?")).not.toBeInTheDocument();
+    expect(screen.getByText("Opened")).toBeInTheDocument();
+  });
+
+  it("asks before discarding a new dashboard, and leaves on Discard", async () => {
+    generateMock.mockResolvedValueOnce({ dashboard: dashboard("My Cases"), reply: "Here it is." });
+    renderPage();
+    await sendMessage("My cases", "Here it is.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to My Dashboards" }));
+    expect(screen.getByText("Discard this dashboard?")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Discard" }));
+
+    expect(await screen.findByText("Opened")).toBeInTheDocument();
   });
 });

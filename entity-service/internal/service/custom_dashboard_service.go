@@ -134,6 +134,12 @@ func (s *customDashboardService) Delete(ctx context.Context, id string) error {
 
 // currentUserID resolves the caller exactly as savedFilterViewService does.
 func (s *customDashboardService) currentUserID(ctx context.Context) (string, error) {
+	return dashboardCallerID(ctx, s.userRepo)
+}
+
+// dashboardCallerID is the platform user id of the caller of x-user-id-token,
+// for the custom dashboard and dashboard sharing services.
+func dashboardCallerID(ctx context.Context, userRepo repository.UserRepository) (string, error) {
 	token := middleware.UserIDTokenFromContext(ctx)
 	if token == "" {
 		return "", &apierror.UnauthorizedError{Msg: "x-user-id-token header is required"}
@@ -142,7 +148,7 @@ func (s *customDashboardService) currentUserID(ctx context.Context) (string, err
 	if err != nil {
 		return "", &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
 	}
-	user, err := s.userRepo.GetUserByEmail(ctx, email)
+	user, err := userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
 		return "", err
 	}

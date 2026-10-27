@@ -28,11 +28,12 @@ import {
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Code, LayoutDashboard, Pencil, Plus, SearchIcon, Trash2 } from "@wso2/oxygen-ui-icons-react";
+import { Code, LayoutDashboard, Pencil, Plus, SearchIcon, Share2, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useSuccessBanner } from "@context/success-banner/SuccessBannerContext";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import DashboardWidgetGrid from "@features/csm-dashboard/components/DashboardWidgetGrid";
 import {
   type CustomDashboardSummary,
@@ -41,6 +42,7 @@ import {
   useGetCustomDashboards,
 } from "@features/csm-custom-dashboards/api/useCustomDashboards";
 import DeleteCustomDashboardDialog from "@features/csm-custom-dashboards/components/DeleteCustomDashboardDialog";
+import ShareCustomDashboardDialog from "@features/csm-custom-dashboards/components/ShareCustomDashboardDialog";
 
 const BASE_PATH = "/dashboard/my";
 
@@ -150,6 +152,9 @@ function SavedDashboardView({ id }: { id: string }): JSX.Element {
  * opens and is cleared when it closes. Typing there is not the menu's own
  * jump-to-letter, so keys stop at the box, except Escape, which closes.
  *
+ * Share opens ShareCustomDashboardDialog for the open dashboard: pick people
+ * (internal staff) to let them view it, view only, and remove them again.
+ *
  * Edit with AI opens the open dashboard in the generate page
  * (`/dashboard/my/:id/edit`, EditCustomDashboardPage) to change it by chat.
  */
@@ -167,6 +172,8 @@ export default function MyDashboardsPage(): JSX.Element {
   // so its name does not vanish during the closing animation.
   const [deleteTarget, setDeleteTarget] = useState<CustomDashboardSummary | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const currentUserEmail = useIdTokenClaims()?.email;
 
   if (dashboardList.isError) {
     return (
@@ -338,6 +345,9 @@ export default function MyDashboardsPage(): JSX.Element {
               ))}
             </Select>
           </FormControl>
+          <Button variant="outlined" size="small" startIcon={<Share2 size={16} />} onClick={() => setShareOpen(true)}>
+            Share
+          </Button>
           <Button
             variant="outlined"
             size="small"
@@ -351,6 +361,12 @@ export default function MyDashboardsPage(): JSX.Element {
         </Box>
       </Box>
       <SavedDashboardView id={selected.id} />
+      <ShareCustomDashboardDialog
+        open={shareOpen}
+        dashboard={{ id: selected.id, name: selected.name }}
+        currentUserEmail={currentUserEmail}
+        onClose={() => setShareOpen(false)}
+      />
       <DeleteCustomDashboardDialog
         open={deleteOpen}
         name={deleteTarget?.name ?? ""}

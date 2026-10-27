@@ -39,6 +39,10 @@ type fakeCustomDashboardClient struct {
 	gotDefinition  string
 	list           []entity.CustomDashboardSummary
 	stored         entity.CustomDashboard
+	gotUserID      string
+	shares         []entity.CustomDashboardShare
+	sharedList     []entity.SharedCustomDashboardSummary
+	shared         entity.SharedCustomDashboard
 	err            error
 }
 
@@ -49,6 +53,47 @@ func (f *fakeCustomDashboardClient) GetCustomDashboard(_ context.Context, id str
 		return entity.CustomDashboard{}, f.err
 	}
 	return f.stored, nil
+}
+
+func (f *fakeCustomDashboardClient) ListCustomDashboardShares(_ context.Context, id string) ([]entity.CustomDashboardShare, error) {
+	f.called = true
+	f.gotID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.shares, nil
+}
+
+func (f *fakeCustomDashboardClient) AddCustomDashboardShare(_ context.Context, id, userID string) ([]entity.CustomDashboardShare, error) {
+	f.called = true
+	f.gotID, f.gotUserID = id, userID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.shares, nil
+}
+
+func (f *fakeCustomDashboardClient) RemoveCustomDashboardShare(_ context.Context, id, userID string) error {
+	f.called = true
+	f.gotID, f.gotUserID = id, userID
+	return f.err
+}
+
+func (f *fakeCustomDashboardClient) ListSharedCustomDashboards(context.Context) ([]entity.SharedCustomDashboardSummary, error) {
+	f.called = true
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.sharedList, nil
+}
+
+func (f *fakeCustomDashboardClient) GetSharedCustomDashboard(_ context.Context, id string) (entity.SharedCustomDashboard, error) {
+	f.called = true
+	f.gotID = id
+	if f.err != nil {
+		return entity.SharedCustomDashboard{}, f.err
+	}
+	return f.shared, nil
 }
 
 func (f *fakeCustomDashboardClient) DeleteCustomDashboard(_ context.Context, id string) error {
@@ -478,6 +523,275 @@ func TestDeleteCustomDashboard_UpstreamErrorsAreGeneric(t *testing.T) {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			client := &fakeCustomDashboardClient{err: &apierror.Error{StatusCode: tc.status, Body: `{"code":0,"message":"upstream detail"}`}}
 			w := deleteCustomDashboard(client, testCustomDashboardID)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if got := decodeJSON[errorBody](t, w); got.Message != tc.msg {
+				t.Errorf("message = %q, want %q", got.Message, tc.msg)
+			}
+		})
+	}
+}
+
+const testShareUserID = "00000000-0000-0000-0000-000000000011"
+
+func serveShareRoute(client *fakeCustomDashboardClient, method, path string) *httptest.ResponseRecorder {
+	h := NewCustomDashboardHandler(client)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /dashboards/custom/{id}/shares", h.ListCustomDashboardShares)
+	mux.HandleFunc("PUT /dashboards/custom/{id}/shares/{userId}", h.AddCustomDashboardShare)
+	mux.HandleFunc("DELETE /dashboards/custom/{id}/shares/{userId}", h.RemoveCustomDashboardShare)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, withUser(httptest.NewRequest(method, path, nil)))
+	return w
+}
+
+func aliceShare() []entity.CustomDashboardShare {
+	id := testShareUserID
+	return []entity.CustomDashboardShare{{User: entity.CustomDashboardPerson{ID: &id, Email: "alice@example.com", Name: "Alice Perera"}, SharedOn: "2026-10-27T04:21:07Z"}}
+}
+
+func TestListCustomDashboardShares(t *testing.T) {
+	client := &fakeCustomDashboardClient{shares: aliceShare()}
+	w := serveShareRoute(client, http.MethodGet, "/dashboards/custom/"+strings.ToUpper(testCustomDashboardID)+"/shares")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if client.gotID != testCustomDashboardID {
+		t.Errorf("id = %q, want the lower-case id", client.gotID)
+	}
+	got := decodeJSON[customDashboardShareListResponse](t, w)
+	if len(got.Shares) != 1 || got.Shares[0].User.Name != "Alice Perera" || got.Shares[0].SharedOn == "" {
+		t.Fatalf("body = %+v", got)
+	}
+}
+
+func TestListCustomDashboardShares_EmptyIsAnEmptyArray(t *testing.T) {
+	w := serveShareRoute(&fakeCustomDashboardClient{shares: []entity.CustomDashboardShare{}}, http.MethodGet, "/dashboards/custom/"+testCustomDashboardID+"/shares")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"shares":[]}` {
+		t.Fatalf("status %d, body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAddCustomDashboardShare(t *testing.T) {
+	client := &fakeCustomDashboardClient{shares: aliceShare()}
+	w := serveShareRoute(client, http.MethodPut, "/dashboards/custom/"+testCustomDashboardID+"/shares/"+strings.ToUpper(testShareUserID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if client.gotID != testCustomDashboardID || client.gotUserID != testShareUserID {
+		t.Errorf("shared (%q, %q), want lower-case ids", client.gotID, client.gotUserID)
+	}
+	if got := decodeJSON[customDashboardShareListResponse](t, w); len(got.Shares) != 1 {
+		t.Fatalf("body = %+v", got)
+	}
+}
+
+func TestRemoveCustomDashboardShare(t *testing.T) {
+	client := &fakeCustomDashboardClient{}
+	w := serveShareRoute(client, http.MethodDelete, "/dashboards/custom/"+testCustomDashboardID+"/shares/"+testShareUserID)
+	if w.Code != http.StatusNoContent || w.Body.Len() != 0 || client.gotUserID != testShareUserID {
+		t.Fatalf("status %d, body %q, user %q", w.Code, w.Body.String(), client.gotUserID)
+	}
+}
+
+func TestCustomDashboardShares_RejectBadIDsAndNoUser(t *testing.T) {
+	bad := []struct{ method, path string }{
+		{http.MethodGet, "/dashboards/custom/abc/shares"},
+		{http.MethodPut, "/dashboards/custom/abc/shares/" + testShareUserID},
+		{http.MethodPut, "/dashboards/custom/" + testCustomDashboardID + "/shares/abc"},
+		{http.MethodDelete, "/dashboards/custom/" + testCustomDashboardID + "/shares/abc"},
+	}
+	for _, tc := range bad {
+		client := &fakeCustomDashboardClient{}
+		if w := serveShareRoute(client, tc.method, tc.path); w.Code != http.StatusBadRequest || client.called {
+			t.Errorf("%s %s: status %d, called %v; want 400 and no upstream call", tc.method, tc.path, w.Code, client.called)
+		}
+	}
+
+	handlers := map[string]func(*CustomDashboardHandler) http.HandlerFunc{
+		"list":   func(h *CustomDashboardHandler) http.HandlerFunc { return h.ListCustomDashboardShares },
+		"add":    func(h *CustomDashboardHandler) http.HandlerFunc { return h.AddCustomDashboardShare },
+		"remove": func(h *CustomDashboardHandler) http.HandlerFunc { return h.RemoveCustomDashboardShare },
+	}
+	for name, pick := range handlers {
+		client := &fakeCustomDashboardClient{}
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.SetPathValue("id", testCustomDashboardID)
+		req.SetPathValue("userId", testShareUserID)
+		w := httptest.NewRecorder()
+		pick(NewCustomDashboardHandler(client))(w, req)
+		if w.Code != http.StatusUnauthorized || client.called {
+			t.Errorf("%s without a user: status %d, called %v; want 401 and no upstream call", name, w.Code, client.called)
+		}
+	}
+}
+
+func TestAddCustomDashboardShare_PassesRefusalsOn(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		want     int
+		wantText string
+	}{
+		{"yourself", http.StatusBadRequest, `{"code":400,"message":"you cannot share a dashboard with yourself"}`, http.StatusBadRequest, "you cannot share a dashboard with yourself"},
+		{"not internal staff", http.StatusBadRequest, `{"code":400,"message":"dashboards can only be shared with internal staff"}`, http.StatusBadRequest, "dashboards can only be shared with internal staff"},
+		{"unknown user or dashboard", http.StatusNotFound, `{"code":404,"message":"user not found"}`, http.StatusNotFound, ErrMsgNotFound},
+		{"entity-service failed", http.StatusInternalServerError, `{"code":500,"message":"pq: boom"}`, http.StatusInternalServerError, errMsgCustomDashboardShareFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeCustomDashboardClient{err: &apierror.Error{StatusCode: tc.status, Body: tc.body}}
+			w := serveShareRoute(client, http.MethodPut, "/dashboards/custom/"+testCustomDashboardID+"/shares/"+testShareUserID)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if got := decodeJSON[errorBody](t, w); got.Message != tc.wantText {
+				t.Errorf("message = %q, want %q", got.Message, tc.wantText)
+			}
+		})
+	}
+}
+
+func TestListAndRemoveShares_UpstreamErrorsAreGeneric(t *testing.T) {
+	cases := []struct {
+		name, method, path string
+		status, want       int
+		msg                string
+	}{
+		{"list not the owner's", http.MethodGet, "/dashboards/custom/" + testCustomDashboardID + "/shares", http.StatusNotFound, http.StatusNotFound, ErrMsgNotFound},
+		{"list failed", http.MethodGet, "/dashboards/custom/" + testCustomDashboardID + "/shares", http.StatusInternalServerError, http.StatusInternalServerError, errMsgCustomDashboardSharesFailed},
+		{"remove not shared", http.MethodDelete, "/dashboards/custom/" + testCustomDashboardID + "/shares/" + testShareUserID, http.StatusNotFound, http.StatusNotFound, ErrMsgNotFound},
+		{"remove failed", http.MethodDelete, "/dashboards/custom/" + testCustomDashboardID + "/shares/" + testShareUserID, http.StatusBadRequest, http.StatusBadRequest, errMsgCustomDashboardUnshareFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeCustomDashboardClient{err: &apierror.Error{StatusCode: tc.status, Body: `{"code":0,"message":"upstream detail"}`}}
+			w := serveShareRoute(client, tc.method, tc.path)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if got := decodeJSON[errorBody](t, w); got.Message != tc.msg {
+				t.Errorf("message = %q, want %q", got.Message, tc.msg)
+			}
+		})
+	}
+}
+
+func serveSharedRoute(client *fakeCustomDashboardClient, path string) *httptest.ResponseRecorder {
+	h := NewCustomDashboardHandler(client)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /dashboards/shared", h.ListSharedDashboards)
+	mux.HandleFunc("GET /dashboards/shared/{id}", h.GetSharedDashboard)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, withUser(httptest.NewRequest(http.MethodGet, path, nil)))
+	return w
+}
+
+func janeOwner() entity.CustomDashboardPerson {
+	id := "00000000-0000-0000-0000-000000000001"
+	return entity.CustomDashboardPerson{ID: &id, Email: "jane.doe@example.com", Name: "Jane Doe"}
+}
+
+func TestListSharedDashboards(t *testing.T) {
+	client := &fakeCustomDashboardClient{sharedList: []entity.SharedCustomDashboardSummary{
+		{ID: testCustomDashboardID, Name: "Live Save Test", Owner: janeOwner(), SharedOn: "a", UpdatedOn: "b"},
+	}}
+	w := serveSharedRoute(client, "/dashboards/shared")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	got := decodeJSON[sharedDashboardListResponse](t, w)
+	if len(got.Dashboards) != 1 || got.Dashboards[0].Owner.Name != "Jane Doe" || got.Dashboards[0].UpdatedOn != "b" {
+		t.Fatalf("body = %+v", got)
+	}
+	if strings.Contains(w.Body.String(), "definition") {
+		t.Errorf("list carries a definition: %s", w.Body.String())
+	}
+}
+
+func TestListSharedDashboards_EmptyIsAnEmptyArray(t *testing.T) {
+	w := serveSharedRoute(&fakeCustomDashboardClient{}, "/dashboards/shared")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"dashboards":[]}` {
+		t.Fatalf("status %d, body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetSharedDashboard_ServesTheOwnersVersion(t *testing.T) {
+	_, draft := customDraft(t, testCustomDashboardID)
+	client := &fakeCustomDashboardClient{shared: entity.SharedCustomDashboard{
+		ID: testCustomDashboardID, Name: "Draft Round Trip", Definition: storedDefinition(t, draft),
+		Owner: janeOwner(), SharedOn: "2026-10-27T04:00:00Z", UpdatedOn: "2026-10-27T05:00:00Z",
+	}}
+
+	w := serveSharedRoute(client, "/dashboards/shared/"+strings.ToUpper(testCustomDashboardID))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if client.gotID != testCustomDashboardID {
+		t.Errorf("asked for %q, want the lower-case id", client.gotID)
+	}
+	got := decodeJSON[sharedDashboardResponse](t, w)
+	var sent dashboardDetailView
+	if err := json.Unmarshal(draft, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Dashboard, sent) {
+		t.Errorf("dashboard differs from what the owner saved\n got: %+v\nwant: %+v", got.Dashboard, sent)
+	}
+	if got.Owner.Name != "Jane Doe" || got.SharedOn != "2026-10-27T04:00:00Z" || got.UpdatedOn != "2026-10-27T05:00:00Z" {
+		t.Errorf("owner and times = %+v, %q, %q", got.Owner, got.SharedOn, got.UpdatedOn)
+	}
+}
+
+func TestGetSharedDashboard_OutdatedAsksForTheOwner(t *testing.T) {
+	stored := `{"id":"x","displayName":"Old","type":"cs","widgets":[{"id":"inc","displayName":"Incidents","resourceType":"incident","shape":"count","gridWidth":3,"query":{}}]}`
+	client := &fakeCustomDashboardClient{shared: entity.SharedCustomDashboard{ID: testCustomDashboardID, Definition: stored, Owner: janeOwner()}}
+	w := serveSharedRoute(client, "/dashboards/shared/"+testCustomDashboardID)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422: %s", w.Code, w.Body.String())
+	}
+	if got := decodeJSON[errorBody](t, w); got.Message != errMsgSharedDashboardOutdated {
+		t.Errorf("message = %q", got.Message)
+	}
+}
+
+func TestGetSharedDashboard_RejectsBadIDAndNoUser(t *testing.T) {
+	client := &fakeCustomDashboardClient{}
+	if w := serveSharedRoute(client, "/dashboards/shared/abc"); w.Code != http.StatusBadRequest || client.called {
+		t.Errorf("non-UUID: status %d, called %v", w.Code, client.called)
+	}
+	for name, h := range map[string]http.HandlerFunc{
+		"list": NewCustomDashboardHandler(client).ListSharedDashboards,
+		"get":  NewCustomDashboardHandler(client).GetSharedDashboard,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.SetPathValue("id", testCustomDashboardID)
+		w := httptest.NewRecorder()
+		h(w, req)
+		if w.Code != http.StatusUnauthorized || client.called {
+			t.Errorf("%s without a user: status %d, called %v", name, w.Code, client.called)
+		}
+	}
+}
+
+func TestSharedDashboards_UpstreamErrorsAreGeneric(t *testing.T) {
+	cases := []struct {
+		name, path   string
+		status, want int
+		msg          string
+	}{
+		{"get not shared with me", "/dashboards/shared/" + testCustomDashboardID, http.StatusNotFound, http.StatusNotFound, ErrMsgNotFound},
+		{"get failed", "/dashboards/shared/" + testCustomDashboardID, http.StatusInternalServerError, http.StatusInternalServerError, errMsgCustomDashboardLoadFailed},
+		{"list failed", "/dashboards/shared", http.StatusInternalServerError, http.StatusInternalServerError, errMsgSharedDashboardListFailed},
+		{"list unauthorized", "/dashboards/shared", http.StatusUnauthorized, http.StatusUnauthorized, ErrMsgUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeCustomDashboardClient{err: &apierror.Error{StatusCode: tc.status, Body: `{"code":0,"message":"upstream detail"}`}}
+			w := serveSharedRoute(client, tc.path)
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
 			}

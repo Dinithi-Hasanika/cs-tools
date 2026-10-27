@@ -141,6 +141,19 @@ type CustomDashboardService interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// CustomDashboardShareService shares the caller's saved dashboards with other
+// users, view only (CSM portal Shared Dashboards). Postgres-only. The caller is
+// always resolved from x-user-id-token. Only a dashboard's owner lists or
+// changes its shares; a recipient sees only the dashboards shared with them,
+// never who else has them.
+type CustomDashboardShareService interface {
+	ListShares(ctx context.Context, dashboardID string) (domain.CustomDashboardShareList, error)
+	AddShare(ctx context.Context, dashboardID, userID string) (domain.CustomDashboardShareList, error)
+	RemoveShare(ctx context.Context, dashboardID, userID string) error
+	ListSharedWithMe(ctx context.Context) (domain.SharedCustomDashboardList, error)
+	GetSharedWithMe(ctx context.Context, dashboardID string) (domain.SharedCustomDashboard, error)
+}
+
 // RunbookService manages the alert-name to runbook catalog (Operations > Runbooks).
 type RunbookService interface {
 	List(ctx context.Context) (domain.RunbookList, error)

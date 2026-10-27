@@ -4835,6 +4835,308 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+  /dashboards/custom/{id}/shares:
+    get:
+      summary: List who one of the caller's saved dashboards is shared with.
+      description: >
+        The people the caller shared this dashboard with (view only), ordered
+        by name. Owner only: 404 when the caller has no dashboard with this id,
+        including another user's. CS engineers and admins only.
+      operationId: listCustomDashboardShares
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDashboardShareList'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: ServiceUnavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+  /dashboards/custom/{id}/shares/{userId}:
+    put:
+      summary: Share one of the caller's saved dashboards with a user.
+      description: >
+        No request body. The user can view the dashboard in Shared Dashboards
+        (the owner's current version), not change it. Owner only. 400 when the
+        user is the caller or is not internal staff (the message says which);
+        404 when the dashboard is not the caller's or there is no such user.
+        Sharing again is a 200. The response is the dashboard's shares after
+        the change. CS engineers and admins only.
+      operationId: addCustomDashboardShare
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDashboardShareList'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: ServiceUnavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    delete:
+      summary: Stop sharing one of the caller's saved dashboards with a user.
+      description: >
+        Owner only. 404 when the dashboard is not the caller's or is not
+        shared with that user. CS engineers and admins only.
+      operationId: removeCustomDashboardShare
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: NoContent
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: ServiceUnavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+  /dashboards/shared:
+    get:
+      summary: List the dashboards other users shared with the caller.
+      description: >
+        View only. Each entry names its owner (who shared it); ordered by name,
+        without definitions (for the Shared Dashboards switcher). An empty list
+        is `{"dashboards": []}`. The caller's own dashboards are not listed.
+        CS engineers and admins only.
+      operationId: listSharedDashboards
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedDashboardList'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: ServiceUnavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+  /dashboards/shared/{id}:
+    get:
+      summary: Get one dashboard shared with the caller.
+      description: >
+        View only: the owner's current version, in the same shape as
+        GET /dashboards/{dashboardId}, with who shared it. The stored
+        definition is checked again; 422 when it no longer passes because the
+        dashboard rules changed since it was saved (the message asks the
+        recipient to have the owner update it). 404 when it is not shared with
+        the caller, including the caller's own. CS engineers and admins only.
+      operationId: getSharedDashboard
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedDashboardResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "422":
+          description: UnprocessableEntity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: ServiceUnavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
   /dashboards/generate-code:
     post:
       summary: Generate a code-based dashboard from a chat message (experimental).
@@ -15885,6 +16187,91 @@ components:
         dashboard:
           $ref: '#/components/schemas/Dashboard'
         createdOn:
+          type: string
+          format: date-time
+        updatedOn:
+          type: string
+          format: date-time
+    CustomDashboardPerson:
+      type: object
+      required:
+        - id
+        - email
+        - name
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+        email:
+          type: string
+        name:
+          type: string
+    CustomDashboardShare:
+      type: object
+      required:
+        - user
+        - sharedOn
+      properties:
+        user:
+          $ref: '#/components/schemas/CustomDashboardPerson'
+        sharedOn:
+          type: string
+          format: date-time
+    CustomDashboardShareList:
+      type: object
+      required:
+        - shares
+      properties:
+        shares:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomDashboardShare'
+    SharedDashboardSummary:
+      type: object
+      required:
+        - id
+        - name
+        - owner
+        - sharedOn
+        - updatedOn
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        owner:
+          $ref: '#/components/schemas/CustomDashboardPerson'
+        sharedOn:
+          type: string
+          format: date-time
+        updatedOn:
+          type: string
+          format: date-time
+          description: When the owner last changed the dashboard.
+    SharedDashboardList:
+      type: object
+      required:
+        - dashboards
+      properties:
+        dashboards:
+          type: array
+          items:
+            $ref: '#/components/schemas/SharedDashboardSummary'
+    SharedDashboardResponse:
+      type: object
+      required:
+        - dashboard
+        - owner
+        - sharedOn
+        - updatedOn
+      properties:
+        dashboard:
+          $ref: '#/components/schemas/Dashboard'
+        owner:
+          $ref: '#/components/schemas/CustomDashboardPerson'
+        sharedOn:
           type: string
           format: date-time
         updatedOn:

@@ -56,6 +56,17 @@ vi.mock("@features/csm-dashboard/components/DashboardWidgetGrid", () => ({
   ),
 }));
 
+vi.mock("@hooks/useIdTokenClaims", () => ({ useIdTokenClaims: () => ({ email: "jane.doe@example.com" }) }));
+// The dialog has its own tests; here only whether and for what it opens.
+vi.mock("@features/csm-custom-dashboards/components/ShareCustomDashboardDialog", () => ({
+  default: ({ open, dashboard, currentUserEmail }: { open: boolean; dashboard: { name: string }; currentUserEmail?: string }) =>
+    open ? (
+      <div>
+        Share dialog for {dashboard.name} as {currentUserEmail}
+      </div>
+    ) : null,
+}));
+
 import MyDashboardsPage from "@features/csm-custom-dashboards/pages/MyDashboardsPage";
 
 const A = { id: "5e636a12-0000-4000-8000-00000000000a", name: "Alpha", createdOn: "x", updatedOn: "y" };
@@ -139,6 +150,13 @@ describe("MyDashboardsPage", () => {
     listState = { isError: true };
     renderAt("/dashboard/my");
     expect(screen.getByText("Could not load the dashboard list.")).toBeInTheDocument();
+  });
+
+  it("Share opens the share dialog for the open dashboard", () => {
+    renderAt(`/dashboard/my/${B.id}`);
+    expect(screen.queryByText(/Share dialog for/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect(screen.getByText("Share dialog for Beta as jane.doe@example.com")).toBeInTheDocument();
   });
 
   it("Edit with AI opens the open dashboard's edit page", () => {

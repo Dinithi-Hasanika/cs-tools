@@ -514,6 +514,14 @@ func main() {
 	route("GET /dashboards/custom/{id}", handler.PermWrite, customDashboardHandler.GetCustomDashboard)
 	route("PUT /dashboards/custom/{id}", handler.PermWrite, customDashboardHandler.SaveCustomDashboard)
 	route("DELETE /dashboards/custom/{id}", handler.PermWrite, customDashboardHandler.DeleteCustomDashboard)
+	// Sharing one of the caller's dashboards, view only (owner only).
+	route("GET /dashboards/custom/{id}/shares", handler.PermWrite, customDashboardHandler.ListCustomDashboardShares)
+	route("PUT /dashboards/custom/{id}/shares/{userId}", handler.PermWrite, customDashboardHandler.AddCustomDashboardShare)
+	route("DELETE /dashboards/custom/{id}/shares/{userId}", handler.PermWrite, customDashboardHandler.RemoveCustomDashboardShare)
+	// Dashboards other users shared with the caller, view only. "shared" is a
+	// literal segment, like "custom", so it never collides with {dashboardId}.
+	route("GET /dashboards/shared", handler.PermWrite, customDashboardHandler.ListSharedDashboards)
+	route("GET /dashboards/shared/{id}", handler.PermWrite, customDashboardHandler.GetSharedDashboard)
 	route("GET /updates/product-update-levels", handler.PermTimeCardsAndUpdates, updatesHandler.GetProductUpdateLevels)
 	route("POST /updates/levels/search", handler.PermTimeCardsAndUpdates, updatesHandler.SearchUpdatesBetweenUpdateLevels)
 	route("GET /users/me", handler.PermAuthenticated, usersHandler.GetMe)

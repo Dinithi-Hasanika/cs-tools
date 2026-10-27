@@ -477,6 +477,7 @@ export default function App(): JSX.Element {
                     <Route path="dashboard/my" element={<MyDashboardsPage />} />
                     <Route path="dashboard/my/:dashboardId" element={<MyDashboardsPage />} />
                     <Route path="dashboard/shared" element={<SharedDashboardsPage />} />
+                    <Route path="dashboard/shared/:dashboardId" element={<SharedDashboardsPage />} />
                   </Route>
                   {/* Generating a dashboard is its own page, outside the tab
                       strip (its Back button goes first); static "new"

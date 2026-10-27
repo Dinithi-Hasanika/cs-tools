@@ -40,17 +40,22 @@ const (
 // user as they are. The validation detail is logged, not shown: a draft this
 // backend served passes, so a failure means a stale page or a hand-made body.
 const (
-	errMsgCustomDashboardMissing      = "There is no dashboard to save."
-	errMsgCustomDashboardIDMismatch   = "The dashboard does not match the address it is being saved to."
-	errMsgCustomDashboardInvalid      = "This dashboard can't be saved because it isn't valid. Try generating it again."
-	errMsgCustomDashboardNameEmpty    = "The dashboard needs a name before it can be saved."
-	errMsgCustomDashboardNameTooLong  = "The dashboard name is too long: keep it under 255 characters."
-	errMsgCustomDashboardTooLarge     = "This dashboard is too large to save. Try one with fewer widgets."
-	errMsgCustomDashboardSaveFailed   = "The dashboard couldn't be saved. Try again in a moment."
-	errMsgCustomDashboardListFailed   = "Your saved dashboards couldn't be loaded. Try again in a moment."
-	errMsgCustomDashboardLoadFailed   = "The dashboard couldn't be loaded. Try again in a moment."
-	errMsgCustomDashboardDeleteFailed = "The dashboard couldn't be deleted. Try again in a moment."
-	errMsgCustomDashboardOutdated     = "This saved dashboard can't be shown any more because dashboards have changed since it was saved. Generate it again."
+	errMsgCustomDashboardMissing       = "There is no dashboard to save."
+	errMsgCustomDashboardIDMismatch    = "The dashboard does not match the address it is being saved to."
+	errMsgCustomDashboardInvalid       = "This dashboard can't be saved because it isn't valid. Try generating it again."
+	errMsgCustomDashboardNameEmpty     = "The dashboard needs a name before it can be saved."
+	errMsgCustomDashboardNameTooLong   = "The dashboard name is too long: keep it under 255 characters."
+	errMsgCustomDashboardTooLarge      = "This dashboard is too large to save. Try one with fewer widgets."
+	errMsgCustomDashboardSaveFailed    = "The dashboard couldn't be saved. Try again in a moment."
+	errMsgCustomDashboardListFailed    = "Your saved dashboards couldn't be loaded. Try again in a moment."
+	errMsgCustomDashboardLoadFailed    = "The dashboard couldn't be loaded. Try again in a moment."
+	errMsgCustomDashboardDeleteFailed  = "The dashboard couldn't be deleted. Try again in a moment."
+	errMsgCustomDashboardSharesFailed  = "The people this dashboard is shared with couldn't be loaded. Try again in a moment."
+	errMsgCustomDashboardShareFailed   = "The dashboard couldn't be shared. Try again in a moment."
+	errMsgCustomDashboardUnshareFailed = "The dashboard couldn't be unshared. Try again in a moment."
+	errMsgSharedDashboardListFailed    = "The dashboards shared with you couldn't be loaded. Try again in a moment."
+	errMsgSharedDashboardOutdated      = "This shared dashboard can't be shown any more because dashboards have changed since it was saved. Ask its owner to update it."
+	errMsgCustomDashboardOutdated      = "This saved dashboard can't be shown any more because dashboards have changed since it was saved. Generate it again."
 )
 
 // entityCustomDashboardClient is the part of the entity client the custom
@@ -59,6 +64,11 @@ type entityCustomDashboardClient interface {
 	ListCustomDashboards(ctx context.Context) ([]entity.CustomDashboardSummary, error)
 	GetCustomDashboard(ctx context.Context, id string) (entity.CustomDashboard, error)
 	DeleteCustomDashboard(ctx context.Context, id string) error
+	ListCustomDashboardShares(ctx context.Context, id string) ([]entity.CustomDashboardShare, error)
+	AddCustomDashboardShare(ctx context.Context, id, userID string) ([]entity.CustomDashboardShare, error)
+	RemoveCustomDashboardShare(ctx context.Context, id, userID string) error
+	ListSharedCustomDashboards(ctx context.Context) ([]entity.SharedCustomDashboardSummary, error)
+	GetSharedCustomDashboard(ctx context.Context, id string) (entity.SharedCustomDashboard, error)
 	SaveCustomDashboard(ctx context.Context, id, name, definition string) (entity.CustomDashboard, error)
 }
 
@@ -69,6 +79,13 @@ type customDashboardSummary struct {
 	Name      string `json:"name"`
 	CreatedOn string `json:"createdOn"`
 	UpdatedOn string `json:"updatedOn"`
+}
+
+// customDashboardShareListResponse is the body of GET and PUT
+// /dashboards/custom/{id}/shares[/{userId}]: who the dashboard is shared with,
+// in entity-service's shape (each person's id, email and name, and when).
+type customDashboardShareListResponse struct {
+	Shares []entity.CustomDashboardShare `json:"shares"`
 }
 
 // customDashboardListResponse is the body of GET /dashboards/custom.
@@ -96,18 +113,41 @@ type customDashboardResponse struct {
 // parsed definition, and the id and times come from the stored row.
 func newCustomDashboardResponse(d dashboard.Dashboard, saved entity.CustomDashboard) customDashboardResponse {
 	return customDashboardResponse{
-		Dashboard: dashboardDetailView{
-			ID:          saved.ID,
-			DisplayName: d.DisplayName,
-			Type:        d.Type,
-			IsDefault:   d.IsDefault,
-			TargetTeam:  d.TargetTeam,
-			IsTeamBased: d.IsTeamBased,
-			Widgets:     widgetViews(d.Widgets),
-		},
+		Dashboard: storedDashboardView(d, saved.ID),
 		CreatedOn: saved.CreatedOn,
 		UpdatedOn: saved.UpdatedOn,
 	}
+}
+
+// storedDashboardView is a parsed stored definition in the
+// GET /dashboards/{dashboardId} shape, under the stored row's id.
+func storedDashboardView(d dashboard.Dashboard, id string) dashboardDetailView {
+	return dashboardDetailView{
+		ID:          id,
+		DisplayName: d.DisplayName,
+		Type:        d.Type,
+		IsDefault:   d.IsDefault,
+		TargetTeam:  d.TargetTeam,
+		IsTeamBased: d.IsTeamBased,
+		Widgets:     widgetViews(d.Widgets),
+	}
+}
+
+// sharedDashboardListResponse is the body of GET /dashboards/shared: the
+// dashboards other users shared with the caller, each with its owner, no
+// definitions (entity-service's shape).
+type sharedDashboardListResponse struct {
+	Dashboards []entity.SharedCustomDashboardSummary `json:"dashboards"`
+}
+
+// sharedDashboardResponse is the body of GET /dashboards/shared/{id}: the
+// dashboard in the GET /dashboards/{dashboardId} shape, who shared it, when,
+// and when its owner last changed it.
+type sharedDashboardResponse struct {
+	Dashboard dashboardDetailView          `json:"dashboard"`
+	Owner     entity.CustomDashboardPerson `json:"owner"`
+	SharedOn  string                       `json:"sharedOn"`
+	UpdatedOn string                       `json:"updatedOn"`
 }
 
 // CustomDashboardHandler serves the caller's own saved dashboards (My
@@ -206,6 +246,141 @@ func (h *CustomDashboardHandler) DeleteCustomDashboard(w http.ResponseWriter, r 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// customDashboardAndUserIDs reads and checks the {id} and {userId} path
+// values; on a bad one it has written the 400 and returns false.
+func customDashboardAndUserIDs(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	id, userID := r.PathValue("id"), r.PathValue("userId")
+	if !uuidRe.MatchString(id) || !uuidRe.MatchString(userID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return "", "", false
+	}
+	return strings.ToLower(id), strings.ToLower(userID), true
+}
+
+// ListCustomDashboardShares handles GET /dashboards/custom/{id}/shares: who
+// the caller's dashboard is shared with. Owner only: another user's
+// dashboard is a 404, the same as a missing one.
+func (h *CustomDashboardHandler) ListCustomDashboardShares(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	id := r.PathValue("id")
+	if !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+	shares, err := h.entity.ListCustomDashboardShares(r.Context(), strings.ToLower(id))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity ListCustomDashboardShares failed", "dashboardId", id, "err", err)
+		mapUpstreamErrorGeneric(w, err, errMsgCustomDashboardSharesFailed)
+		return
+	}
+	writeJSONValue(w, http.StatusOK, customDashboardShareListResponse{Shares: shares})
+}
+
+// AddCustomDashboardShare handles PUT /dashboards/custom/{id}/shares/{userId}
+// (no body): shares the caller's dashboard with a user, view only, and answers
+// the dashboard's shares after the change; sharing again is a 200 too. The
+// refusals are passed on with mapUpstreamError, as for Save, because the user
+// can act on them: the user is the caller, or not internal staff (400).
+// A missing dashboard or user is a 404.
+func (h *CustomDashboardHandler) AddCustomDashboardShare(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	id, userID, ok := customDashboardAndUserIDs(w, r)
+	if !ok {
+		return
+	}
+	shares, err := h.entity.AddCustomDashboardShare(r.Context(), id, userID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity AddCustomDashboardShare failed", "dashboardId", id, "userId", userID, "err", err)
+		mapUpstreamError(w, err, errMsgCustomDashboardShareFailed)
+		return
+	}
+	writeJSONValue(w, http.StatusOK, customDashboardShareListResponse{Shares: shares})
+}
+
+// RemoveCustomDashboardShare handles DELETE /dashboards/custom/{id}/shares/{userId}
+// (204): stops sharing the caller's dashboard with that user. Not shared with
+// them, or not the caller's dashboard, is a 404.
+func (h *CustomDashboardHandler) RemoveCustomDashboardShare(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	id, userID, ok := customDashboardAndUserIDs(w, r)
+	if !ok {
+		return
+	}
+	if err := h.entity.RemoveCustomDashboardShare(r.Context(), id, userID); err != nil {
+		slog.ErrorContext(r.Context(), "entity RemoveCustomDashboardShare failed", "dashboardId", id, "userId", userID, "err", err)
+		mapUpstreamErrorGeneric(w, err, errMsgCustomDashboardUnshareFailed)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListSharedDashboards handles GET /dashboards/shared: the dashboards other
+// users shared with the caller, view only, ordered by name, never null.
+func (h *CustomDashboardHandler) ListSharedDashboards(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	list, err := h.entity.ListSharedCustomDashboards(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity ListSharedCustomDashboards failed", "err", err)
+		mapUpstreamErrorGeneric(w, err, errMsgSharedDashboardListFailed)
+		return
+	}
+	if list == nil {
+		list = []entity.SharedCustomDashboardSummary{}
+	}
+	writeJSONValue(w, http.StatusOK, sharedDashboardListResponse{Dashboards: list})
+}
+
+// GetSharedDashboard handles GET /dashboards/shared/{id}: one dashboard shared
+// with the caller, the owner's current version, view only. Not shared with
+// the caller (including the caller's own) is a 404.
+//
+// Like GetCustomDashboard, the stored definition is checked again with
+// dashboard.ParseGenerated; one that no longer passes is a 422 whose message
+// asks the recipient to have the owner update it (only the owner can).
+func (h *CustomDashboardHandler) GetSharedDashboard(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	id := r.PathValue("id")
+	if !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+	id = strings.ToLower(id)
+
+	shared, err := h.entity.GetSharedCustomDashboard(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetSharedCustomDashboard failed", "dashboardId", id, "err", err)
+		mapUpstreamErrorGeneric(w, err, errMsgCustomDashboardLoadFailed)
+		return
+	}
+	d, err := dashboard.ParseGenerated([]byte(shared.Definition))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "shared dashboard get: stored definition no longer valid", "dashboardId", id, "err", err)
+		writeError(w, http.StatusUnprocessableEntity, errMsgSharedDashboardOutdated)
+		return
+	}
+	writeJSONValue(w, http.StatusOK, sharedDashboardResponse{
+		Dashboard: storedDashboardView(d, shared.ID),
+		Owner:     shared.Owner,
+		SharedOn:  shared.SharedOn,
+		UpdatedOn: shared.UpdatedOn,
+	})
 }
 
 // SaveCustomDashboard handles PUT /dashboards/custom/{id}: creates the

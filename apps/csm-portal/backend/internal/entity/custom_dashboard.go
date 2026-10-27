@@ -111,3 +111,122 @@ func (c *CustomerEntityClient) DeleteCustomDashboard(ctx context.Context, id str
 	_, err := c.do(ctx, http.MethodDelete, customDashboardPath(id), nil)
 	return err
 }
+
+// CustomDashboardPerson is a person on a dashboard share (entity-service's
+// UserReference): the recipient on the owner's list, or the owner on a
+// recipient's.
+type CustomDashboardPerson struct {
+	ID    *string `json:"id"`
+	Email string  `json:"email"`
+	Name  string  `json:"name"`
+}
+
+// CustomDashboardShare is one person a saved dashboard is shared with, as its
+// owner sees it.
+type CustomDashboardShare struct {
+	User     CustomDashboardPerson `json:"user"`
+	SharedOn string                `json:"sharedOn"`
+}
+
+type customDashboardShareListResponse struct {
+	Shares []CustomDashboardShare `json:"shares"`
+}
+
+// SharedCustomDashboardSummary is one dashboard another user shared with the
+// caller, without its definition.
+type SharedCustomDashboardSummary struct {
+	ID        string                `json:"id"`
+	Name      string                `json:"name"`
+	Owner     CustomDashboardPerson `json:"owner"`
+	SharedOn  string                `json:"sharedOn"`
+	UpdatedOn string                `json:"updatedOn"`
+}
+
+type sharedCustomDashboardListResponse struct {
+	Dashboards []SharedCustomDashboardSummary `json:"dashboards"`
+}
+
+// SharedCustomDashboard is one dashboard shared with the caller, with its
+// definition (the owner's current version, view only).
+type SharedCustomDashboard struct {
+	ID         string                `json:"id"`
+	Name       string                `json:"name"`
+	Definition string                `json:"definition"`
+	Owner      CustomDashboardPerson `json:"owner"`
+	SharedOn   string                `json:"sharedOn"`
+	UpdatedOn  string                `json:"updatedOn"`
+}
+
+func customDashboardSharePath(id, userID string) string {
+	return customDashboardPath(id) + "/shares/" + url.PathEscape(userID)
+}
+
+func decodeShareList(raw []byte) ([]CustomDashboardShare, error) {
+	var resp customDashboardShareListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("entity: decode custom dashboard shares: %w", err)
+	}
+	if resp.Shares == nil {
+		resp.Shares = []CustomDashboardShare{}
+	}
+	return resp.Shares, nil
+}
+
+// ListCustomDashboardShares calls GET /users/me/dashboards/{id}/shares (owner
+// only: another user's dashboard is a 404). Never nil on success.
+func (c *CustomerEntityClient) ListCustomDashboardShares(ctx context.Context, id string) ([]CustomDashboardShare, error) {
+	raw, err := c.do(ctx, http.MethodGet, customDashboardPath(id)+"/shares", nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeShareList(raw)
+}
+
+// AddCustomDashboardShare calls PUT /users/me/dashboards/{id}/shares/{userId}
+// (no body) and returns the dashboard's shares after the change. Sharing with
+// the caller or with someone who is not internal staff is a 400; an unknown
+// user or dashboard a 404.
+func (c *CustomerEntityClient) AddCustomDashboardShare(ctx context.Context, id, userID string) ([]CustomDashboardShare, error) {
+	raw, err := c.do(ctx, http.MethodPut, customDashboardSharePath(id, userID), nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeShareList(raw)
+}
+
+// RemoveCustomDashboardShare calls DELETE /users/me/dashboards/{id}/shares/{userId}
+// (204); not shared with that user is a 404.
+func (c *CustomerEntityClient) RemoveCustomDashboardShare(ctx context.Context, id, userID string) error {
+	_, err := c.do(ctx, http.MethodDelete, customDashboardSharePath(id, userID), nil)
+	return err
+}
+
+// ListSharedCustomDashboards calls GET /users/me/shared-dashboards. Never nil on success.
+func (c *CustomerEntityClient) ListSharedCustomDashboards(ctx context.Context) ([]SharedCustomDashboardSummary, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/users/me/shared-dashboards", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp sharedCustomDashboardListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("entity: decode shared custom dashboards: %w", err)
+	}
+	if resp.Dashboards == nil {
+		resp.Dashboards = []SharedCustomDashboardSummary{}
+	}
+	return resp.Dashboards, nil
+}
+
+// GetSharedCustomDashboard calls GET /users/me/shared-dashboards/{id}; a
+// dashboard not shared with the caller is a 404 *apierror.Error.
+func (c *CustomerEntityClient) GetSharedCustomDashboard(ctx context.Context, id string) (SharedCustomDashboard, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/users/me/shared-dashboards/"+url.PathEscape(id), nil)
+	if err != nil {
+		return SharedCustomDashboard{}, err
+	}
+	var d SharedCustomDashboard
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return SharedCustomDashboard{}, fmt.Errorf("entity: decode shared custom dashboard: %w", err)
+	}
+	return d, nil
+}

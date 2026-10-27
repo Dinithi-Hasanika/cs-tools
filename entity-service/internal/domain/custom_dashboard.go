@@ -62,3 +62,45 @@ type SaveCustomDashboardRequest struct {
 	Name       string `json:"name"`
 	Definition string `json:"definition"`
 }
+
+// CustomDashboardShare is one person a saved dashboard is shared with
+// (migration 0250), as its owner sees it: GET /users/me/dashboards/{id}/shares.
+// A share only lets that person view the dashboard. Only the owner lists or
+// changes a dashboard's shares; a recipient never sees who else has it.
+type CustomDashboardShare struct {
+	User     UserReference `json:"user"`
+	SharedOn time.Time     `json:"sharedOn"`
+}
+
+// CustomDashboardShareList is the body of GET /users/me/dashboards/{id}/shares.
+type CustomDashboardShareList struct {
+	Shares []CustomDashboardShare `json:"shares"`
+}
+
+// SharedCustomDashboardSummary is one dashboard another user shared with the
+// caller, as listed in GET /users/me/shared-dashboards: no definition. Owner
+// is who shared it (the dashboard's owner).
+type SharedCustomDashboardSummary struct {
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Owner     UserReference `json:"owner"`
+	SharedOn  time.Time     `json:"sharedOn"`
+	UpdatedOn time.Time     `json:"updatedOn"`
+}
+
+// SharedCustomDashboardList is the body of GET /users/me/shared-dashboards.
+type SharedCustomDashboardList struct {
+	Dashboards []SharedCustomDashboardSummary `json:"dashboards"`
+}
+
+// SharedCustomDashboard is one dashboard shared with the caller, with its
+// definition (GET /users/me/shared-dashboards/{id}): the owner's current
+// version, read only. Definition is opaque text, as in CustomDashboard.
+type SharedCustomDashboard struct {
+	ID         string        `json:"id"`
+	Name       string        `json:"name"`
+	Definition string        `json:"definition"`
+	Owner      UserReference `json:"owner"`
+	SharedOn   time.Time     `json:"sharedOn"`
+	UpdatedOn  time.Time     `json:"updatedOn"`
+}

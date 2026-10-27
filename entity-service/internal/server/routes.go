@@ -126,9 +126,14 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	}
 
 	var customDashboardHandler *handler.CustomDashboardHandler
+	var customDashboardShareHandler *handler.CustomDashboardShareHandler
 	if db != nil {
+		customDashboardRepo := repository.NewCustomDashboardRepository(db)
 		customDashboardHandler = handler.NewCustomDashboardHandler(
-			service.NewCustomDashboardService(repository.NewCustomDashboardRepository(db), userRepo),
+			service.NewCustomDashboardService(customDashboardRepo, userRepo),
+		)
+		customDashboardShareHandler = handler.NewCustomDashboardShareHandler(
+			service.NewCustomDashboardShareService(repository.NewCustomDashboardShareRepository(db), customDashboardRepo, userRepo),
 		)
 	}
 
@@ -1953,6 +1958,15 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("GET /users/me/dashboards/{id}", customDashboardHandler.Get)
 		mux.HandleFunc("PUT /users/me/dashboards/{id}", customDashboardHandler.Save)
 		mux.HandleFunc("DELETE /users/me/dashboards/{id}", customDashboardHandler.Delete)
+	}
+	if customDashboardShareHandler != nil {
+		// Sharing the caller's saved dashboards (owner) and the ones shared
+		// with the caller (recipient, view only).
+		mux.HandleFunc("GET /users/me/dashboards/{id}/shares", customDashboardShareHandler.ListShares)
+		mux.HandleFunc("PUT /users/me/dashboards/{id}/shares/{userId}", customDashboardShareHandler.AddShare)
+		mux.HandleFunc("DELETE /users/me/dashboards/{id}/shares/{userId}", customDashboardShareHandler.RemoveShare)
+		mux.HandleFunc("GET /users/me/shared-dashboards", customDashboardShareHandler.ListSharedWithMe)
+		mux.HandleFunc("GET /users/me/shared-dashboards/{id}", customDashboardShareHandler.GetSharedWithMe)
 	}
 
 	if membershipRegistrationHandler != nil {

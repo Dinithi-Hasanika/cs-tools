@@ -2691,6 +2691,226 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /users/me/dashboards/{id}/shares:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: List who one of the caller's saved dashboards is shared with.
+      description: >
+        Postgres-only. Owner only: a dashboard that is not the caller's
+        (missing, or another user's) is not found. Recipients are ordered by
+        name.
+      operationId: listCustomDashboardShares
+      responses:
+        "200":
+          description: The dashboard's shares.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDashboardShareList'
+        "400":
+          description: Bad request — the id is not a UUID, or the token carries no email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized — x-user-id-token header is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the caller has no dashboard with that id, or no platform user matches the token email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me/dashboards/{id}/shares/{userId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Share one of the caller's saved dashboards with a user.
+      description: >
+        Postgres-only. No request body. The recipient can view the dashboard
+        (GET /users/me/shared-dashboards/{id}), not change it, and sees the
+        owner's current version. Owner only. The recipient must be internal
+        staff and not the caller. Sharing again is not an error (200). The
+        response is the dashboard's shares after the change.
+      operationId: addCustomDashboardShare
+      responses:
+        "200":
+          description: The dashboard's shares after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDashboardShareList'
+        "400":
+          description: Bad request — an id is not a UUID, the user is the caller, the user is not internal staff, or the token carries no email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized — x-user-id-token header is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the caller has no dashboard with that id, there is no such user, or no platform user matches the token email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Stop sharing one of the caller's saved dashboards with a user.
+      description: >
+        Postgres-only. Owner only.
+      operationId: removeCustomDashboardShare
+      responses:
+        "204":
+          description: No longer shared with that user.
+        "400":
+          description: Bad request — an id is not a UUID, or the token carries no email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized — x-user-id-token header is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — the caller has no dashboard with that id, it is not shared with that user, or no platform user matches the token email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me/shared-dashboards:
+    get:
+      summary: List the dashboards other users shared with the caller.
+      description: >
+        Postgres-only. View only; each entry names its owner. Ordered by name,
+        without definitions. The caller's own dashboards are not listed here.
+      operationId: listSharedCustomDashboards
+      responses:
+        "200":
+          description: The dashboards shared with the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedCustomDashboardList'
+        "400":
+          description: Bad request — the token carries no email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized — x-user-id-token header is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — no platform user matches the token email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me/shared-dashboards/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get one dashboard shared with the caller.
+      description: >
+        Postgres-only. View only: the owner's current version, with its
+        definition. A dashboard not shared with the caller (including the
+        caller's own) is not found.
+      operationId: getSharedCustomDashboard
+      responses:
+        "200":
+          description: The shared dashboard.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedCustomDashboard'
+        "400":
+          description: Bad request — the id is not a UUID, or the token carries no email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized — x-user-id-token header is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Not found — not shared with the caller, or no platform user matches the token email.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /users:
     post:
       summary: Create a new user.
@@ -25889,6 +26109,69 @@ components:
         definition:
           type: string
           description: The dashboard JSON as text, at most 65536 bytes; must not be blank.
+    CustomDashboardShare:
+      type: object
+      required: [user, sharedOn]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserReference'
+        sharedOn:
+          type: string
+          format: date-time
+    CustomDashboardShareList:
+      type: object
+      required: [shares]
+      properties:
+        shares:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomDashboardShare'
+    SharedCustomDashboardSummary:
+      type: object
+      required: [id, name, owner, sharedOn, updatedOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        owner:
+          $ref: '#/components/schemas/UserReference'
+        sharedOn:
+          type: string
+          format: date-time
+        updatedOn:
+          type: string
+          format: date-time
+          description: When the owner last changed the dashboard.
+    SharedCustomDashboardList:
+      type: object
+      required: [dashboards]
+      properties:
+        dashboards:
+          type: array
+          items:
+            $ref: '#/components/schemas/SharedCustomDashboardSummary'
+    SharedCustomDashboard:
+      type: object
+      required: [id, name, definition, owner, sharedOn, updatedOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        definition:
+          type: string
+          description: The dashboard JSON as text (the owner's current version). Validated by the CSM portal backend; not parsed here.
+        owner:
+          $ref: '#/components/schemas/UserReference'
+        sharedOn:
+          type: string
+          format: date-time
+        updatedOn:
+          type: string
+          format: date-time
     Runbook:
       type: object
       required: [id, alertName, runbookUrl, createdOn, createdBy, updatedOn, updatedBy]

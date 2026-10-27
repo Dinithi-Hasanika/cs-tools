@@ -44,6 +44,7 @@ function renderAt(path: string) {
           <Route path="dashboard/my" element={<div>my page</div>} />
           <Route path="dashboard/my/:dashboardId" element={<div>my page</div>} />
           <Route path="dashboard/shared" element={<div>shared page</div>} />
+          <Route path="dashboard/shared/:dashboardId" element={<div>shared page</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -77,6 +78,7 @@ describe("CsmDashboardsLayout", () => {
     ["/dashboard/my", "My Dashboards", "my page"],
     ["/dashboard/my/some-dashboard", "My Dashboards", "my page"],
     ["/dashboard/shared", "Shared Dashboards", "shared page"],
+    ["/dashboard/shared/some-dashboard", "Shared Dashboards", "shared page"],
   ])("at %s selects %s and shows its page", (path, tab, page) => {
     renderAt(path);
 

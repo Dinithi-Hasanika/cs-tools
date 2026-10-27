@@ -168,3 +168,128 @@ func TestCustomDashboardClient_PassesStatusErrorsThrough(t *testing.T) {
 		})
 	}
 }
+
+const testShareUserID = "00000000-0000-0000-0000-000000000011"
+
+func TestListCustomDashboardShares(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusOK,
+		`{"shares":[{"user":{"id":"`+testShareUserID+`","email":"alice@example.com","name":"Alice Perera"},"sharedOn":"2026-10-27T04:21:07Z"}]}`)
+	shares, err := client.ListCustomDashboardShares(userContext(), testCustomDashboardID)
+	if err != nil {
+		t.Fatalf("ListCustomDashboardShares: %v", err)
+	}
+	if got.method != http.MethodGet || got.path != "/users/me/dashboards/"+testCustomDashboardID+"/shares" || got.userToken != "user-token" {
+		t.Errorf("request = %s %s (token %q)", got.method, got.path, got.userToken)
+	}
+	if len(shares) != 1 || shares[0].User.Name != "Alice Perera" || shares[0].User.ID == nil || *shares[0].User.ID != testShareUserID {
+		t.Fatalf("shares = %+v", shares)
+	}
+}
+
+func TestAddCustomDashboardShare(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusOK, `{"shares":null}`)
+	shares, err := client.AddCustomDashboardShare(userContext(), testCustomDashboardID, testShareUserID)
+	if err != nil {
+		t.Fatalf("AddCustomDashboardShare: %v", err)
+	}
+	if got.method != http.MethodPut || got.path != "/users/me/dashboards/"+testCustomDashboardID+"/shares/"+testShareUserID || got.body != "" {
+		t.Errorf("request = %s %s body %q, want PUT with no body", got.method, got.path, got.body)
+	}
+	if shares == nil || len(shares) != 0 {
+		t.Errorf("shares = %#v, want an empty, non-nil slice", shares)
+	}
+}
+
+func TestRemoveCustomDashboardShare(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusNoContent, "")
+	if err := client.RemoveCustomDashboardShare(userContext(), testCustomDashboardID, testShareUserID); err != nil {
+		t.Fatalf("RemoveCustomDashboardShare: %v", err)
+	}
+	if got.method != http.MethodDelete || got.path != "/users/me/dashboards/"+testCustomDashboardID+"/shares/"+testShareUserID {
+		t.Errorf("request = %s %s", got.method, got.path)
+	}
+}
+
+func TestCustomDashboardShare_EscapesUserID(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusBadRequest, `{"code":400,"message":"not a UUID"}`)
+	_, _ = client.AddCustomDashboardShare(userContext(), testCustomDashboardID, "../x")
+	if got.rawPath != "/users/me/dashboards/"+testCustomDashboardID+"/shares/..%2Fx" {
+		t.Errorf("escaped path = %q, want the user id kept as one segment", got.rawPath)
+	}
+}
+
+func TestListSharedCustomDashboards(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusOK,
+		`{"dashboards":[{"id":"`+testCustomDashboardID+`","name":"Live Save Test","owner":{"id":"jane","email":"jane@example.com","name":"Jane Doe"},"sharedOn":"a","updatedOn":"b"}]}`)
+	list, err := client.ListSharedCustomDashboards(userContext())
+	if err != nil {
+		t.Fatalf("ListSharedCustomDashboards: %v", err)
+	}
+	if got.method != http.MethodGet || got.path != "/users/me/shared-dashboards" {
+		t.Errorf("request = %s %s", got.method, got.path)
+	}
+	if len(list) != 1 || list[0].Owner.Name != "Jane Doe" || list[0].UpdatedOn != "b" {
+		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestListSharedCustomDashboards_EmptyIsNotNil(t *testing.T) {
+	client, _ := newCustomDashboardTestClient(t, http.StatusOK, `{"dashboards":null}`)
+	list, err := client.ListSharedCustomDashboards(userContext())
+	if err != nil || list == nil || len(list) != 0 {
+		t.Fatalf("list = %#v, %v; want an empty, non-nil slice", list, err)
+	}
+}
+
+func TestGetSharedCustomDashboard(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusOK,
+		`{"id":"`+testCustomDashboardID+`","name":"Live Save Test","definition":"{\"widgets\":[]}","owner":{"id":null,"email":"jane@example.com","name":"Jane Doe"},"sharedOn":"a","updatedOn":"b"}`)
+	d, err := client.GetSharedCustomDashboard(userContext(), testCustomDashboardID)
+	if err != nil {
+		t.Fatalf("GetSharedCustomDashboard: %v", err)
+	}
+	if got.method != http.MethodGet || got.path != "/users/me/shared-dashboards/"+testCustomDashboardID {
+		t.Errorf("request = %s %s", got.method, got.path)
+	}
+	if d.Definition != `{"widgets":[]}` || d.Owner.Name != "Jane Doe" || d.Owner.ID != nil {
+		t.Fatalf("dashboard = %+v", d)
+	}
+}
+
+func TestCustomDashboardShareClient_PassesStatusErrorsThrough(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		call   func(*CustomerEntityClient) error
+	}{
+		{"list not the owner's", http.StatusNotFound, func(c *CustomerEntityClient) error {
+			_, err := c.ListCustomDashboardShares(userContext(), testCustomDashboardID)
+			return err
+		}},
+		{"add not internal", http.StatusBadRequest, func(c *CustomerEntityClient) error {
+			_, err := c.AddCustomDashboardShare(userContext(), testCustomDashboardID, testShareUserID)
+			return err
+		}},
+		{"remove not shared", http.StatusNotFound, func(c *CustomerEntityClient) error {
+			return c.RemoveCustomDashboardShare(userContext(), testCustomDashboardID, testShareUserID)
+		}},
+		{"get not shared with me", http.StatusNotFound, func(c *CustomerEntityClient) error {
+			_, err := c.GetSharedCustomDashboard(userContext(), testCustomDashboardID)
+			return err
+		}},
+		{"list shared unauthorized", http.StatusUnauthorized, func(c *CustomerEntityClient) error {
+			_, err := c.ListSharedCustomDashboards(userContext())
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _ := newCustomDashboardTestClient(t, tc.status, `{"code":0,"message":"from entity-service"}`)
+			err := tc.call(client)
+			var apiErr *apierror.Error
+			if !errors.As(err, &apiErr) || apiErr.StatusCode != tc.status {
+				t.Fatalf("err = %v, want *apierror.Error with status %d", err, tc.status)
+			}
+		})
+	}
+}

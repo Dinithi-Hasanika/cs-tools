@@ -76,6 +76,8 @@ const (
 //   - ErrGenerateUnavailable                         503
 //   - errDraftInvalid (the request's "current")      400
 //   - generateDeclinedError (the model's {"error"})  422, the model's sentence
+//   - errDashboardTeam (a team filter that cannot   422, the reason (an unknown
+//     work: see dashboardTeams)                         team, the wrong field, ...)
 //   - errGenerateRefused                             422
 //   - errGenerateUnusable, errGenerateTruncated      502
 //   - errGenerateCall, timed out                     504
@@ -95,6 +97,9 @@ func writeGenerateError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &declined):
 		slog.InfoContext(ctx, "dashboard generate: model declined")
 		writeError(w, http.StatusUnprocessableEntity, declined.Reason)
+	case errors.Is(err, errDashboardTeam):
+		slog.InfoContext(ctx, "dashboard generate: unusable team filter", "err", err)
+		writeError(w, http.StatusUnprocessableEntity, dashboardTeamMessage(err))
 	case errors.Is(err, errGenerateRefused):
 		slog.InfoContext(ctx, "dashboard generate: model refused")
 		writeError(w, http.StatusUnprocessableEntity, errMsgGenerateRefused)

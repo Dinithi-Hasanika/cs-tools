@@ -36,8 +36,8 @@ in this catalogue.
 | Field | Rule |
 |---|---|
 | `id` | Leave it out. The portal gives every dashboard its own id. A draft you are editing may carry one; it is ignored either way. |
-| `displayName` | Required, non-empty. |
-| `type` | `"cs"` (organisation-wide) unless the request is about "my team" / a team, then `"cre"`. |
+| `displayName` | Required, non-empty. When the dashboard is filtered by named teams, it starts with their names, e.g. `"Rigel: Open Cases"`, `"Sirius and Draco: SLA Breaches"`. |
+| `type` | `"cs"` (organisation-wide, and also for named teams such as "Rigel") unless the request is about "my team", then `"cre"`. |
 | `isTeamBased` | **Must be `false` when `type` is `"cs"`, and `true` when `type` is `"cre"`.** Any other combination is rejected. |
 | `isDefault` | **Always `false`.** |
 | `targetTeam` | Always `""`. |
@@ -111,7 +111,8 @@ ANDed. Only the field / op pairs in this table are accepted.
 | `tag` | `in`, `notIn` | tag names, **only if the request gives them** |
 | `product` | `in` | exact product names, **only if the request gives them** |
 | `createdOn`, `updatedOn`, `closedOn`, `resolvedOn` | `gte`, `lte` | one date token (below) |
-| `creTeam`, `sreTeam` | `in` | `["__current_team__"]`, **only on a `"cre"` dashboard** |
+| `creTeam`, `sreTeam` | `in` | team **keys** from the Teams section (the last section), each in its team's field: e.g. `creTeam in ["rigel"]`, `creTeam in ["sirius", "draco"]`, `sreTeam in ["apollo"]` |
+| `creTeam`, `sreTeam` | `in` | `["__current_team__"]` ("my team"), **only on a `"cre"` dashboard**, never together with a team key |
 
 **Date tokens** (always relative, never a literal date): `__today__`, `__daysAgo:N__`,
 `__startOfMonth:N__`, `__endOfMonth:N__`, `__startOfQuarter:N__`, `__endOfQuarter:N__`
@@ -144,7 +145,7 @@ Fields: `createdOn`, `updatedOn`, `severity`, `state`, `assignee`.
 ## 7. Grouping (pie and bar)
 
 **Fixed slices** — use when the groups are a short known list (severity, state, issue type, work
-state, engagement type). One slice per value, in a sensible order:
+state, engagement type, ABT teams). One slice per value, in a sensible order:
 
 ```json
 "slices": [
@@ -187,8 +188,9 @@ Never set both `slices` and `groupBy`.
 | "raised by person@example.com", "created by <email>" | `createdBy in ["person@example.com"]` (several people: one `in` with all their emails) |
 | "raised by Alex" (a name, no email) | not expressible: reply with `{"error": ...}` asking for the email address |
 | no creator mentioned | no `createdBy` filter at all (records raised by anyone) |
-| "open", "active", "outstanding", "not closed" | `state notIn ["closed"]` |
-| "new" (state) | `state in ["open"]` |
+| "open", "new" (state) | `state in ["open"]` — the Open state only |
+| "active", "outstanding", "not closed", "ongoing", "unresolved" | `state notIn ["closed"]` — every state except Closed |
+| other wording about a case's state | pick by meaning: a word for one stage of a case ("just raised", "reopened", "awaiting the customer") is `state in` the matching state(s) from the `state` row of section 5; a word for "everything still being worked on" ("pending", "live", "still going") is `state notIn ["closed"]` |
 | "in progress" | `state in ["work_in_progress"]` |
 | "waiting on us", "waiting on WSO2" | `state in ["waiting_on_wso2"]` |
 | "waiting on the customer" | `state in ["awaiting_info", "solution_proposed"]` |
@@ -208,6 +210,16 @@ Never set both `slices` and `groupBy`.
 | "service requests", "SRs" | `resourceType: "service_request"` |
 | "engagements", "migrations" | `resourceType: "engagement"` (migrations add `engagementType in ["migration"]`) |
 | "my team's" | a `"cre"` dashboard with `creTeam in ["__current_team__"]` |
+| a team by name: "Rigel", "Rigel's", "team Rigel", "the Rigel team", "Sirius and Draco" (any case) | that team's **key** in that team's **field** from the Teams section, on a `"cs"` dashboard, in **every** widget the request is about; several teams: one `in` with all their keys; the team names start `displayName` |
+| "ABT", "ABT team", "account based team", "CRE ABT" | a team whose **family is CRE ABT** in the Teams section. Teams of any other family (e.g. a CRE team such as Americas, or an SRE ABT team) are **not** ABT teams |
+| "my ABT", "my ABT team" | same as "my team's" |
+| a named team with "ABT": "Rigel ABT", "the Sirius ABT" | same as the team by name |
+| "all ABTs", "every ABT" (no grouping) | one `creTeam in [...]` with the keys of **every** CRE ABT team |
+| "by ABT", "per ABT", "for each ABT", "separated by ABT", "across ABTs" — the only grouping | one `pie` or `bar` widget, on a `"cs"` dashboard, with **one slice per CRE ABT team** (label = team name, query `creTeam in ["<key>"]`), in the order of the Teams section |
+| "by ABT" **together with** another grouping, e.g. "by severity, separated by ABT" | **one widget per CRE ABT team**: each widget's `query.filters` carries `creTeam in ["<key>"]`, its `displayName` starts with the team name (e.g. "Rigel: SLA Breaches by Severity"), and its slices are the other grouping; `gridWidth` 4. Only the teams the request names, if it names some |
+| a team that is not in the Teams section | not expressible: reply with `{"error": ...}` naming the team and the teams that can be used |
+| "past month", "last month" (rolling), "past 30 days" | `createdOn gte __daysAgo:30__` |
+| "last calendar month", "previous month" | `createdOn gte __startOfMonth:-1__` and `createdOn lte __endOfMonth:-1__` |
 
 If two readings are plausible and the table does not settle it, pick the one above and add a
 `description` on the widget saying what it counts (e.g. "Every state except Closed").
@@ -224,7 +236,12 @@ If two readings are plausible and the table does not settle it, pick the one abo
 5. `line` only on `resourceType: "case"`, `days` 1-90.
 6. `severity` and `issueType` only on `case`; `engagementType` only on `engagement`.
 7. `type` + `isTeamBased`: `cs` with `false`, or `cre` with `true`. `isDefault` is `false`.
-8. The output is a single JSON object.
+8. Team filters: only keys from the Teams section, each in its own field (`creTeam` / `sreTeam`),
+   op `in`, in the top-level `filters` (never an `anyOf` branch), never a team id; `__current_team__`
+   only on a `cre` dashboard. A dashboard for named teams starts its `displayName` with their names.
+   "ABT" means only the teams whose family is CRE ABT; a team filter may sit in a slice's query
+   ("by ABT"), never in an `anyOf` branch.
+9. The output is a single JSON object.
 
 ---
 

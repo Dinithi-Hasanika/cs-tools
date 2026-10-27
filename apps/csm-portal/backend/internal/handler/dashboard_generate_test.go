@@ -325,6 +325,7 @@ func TestGenerateDashboard_MapsEachGeneratorError(t *testing.T) {
 		{"invalid draft", fmt.Errorf("%w: bad", errDraftInvalid), http.StatusBadRequest, errMsgGenerateDraftInvalid},
 		{"declined", &generateDeclinedError{Reason: "Resolution time per engineer is not in the catalogue."}, http.StatusUnprocessableEntity, "Resolution time per engineer is not in the catalogue."},
 		{"refused", errGenerateRefused, http.StatusUnprocessableEntity, errMsgGenerateRefused},
+		{"team filter", fmt.Errorf("%w: widgets[0]: unknown team %q (known teams: rigel, sirius)", errDashboardTeam, "orion"), http.StatusUnprocessableEntity, `Unknown team "orion" (known teams: rigel, sirius).`},
 		{"unusable", fmt.Errorf("%w: %w", errGenerateUnusable, dashboard.ErrGeneratedInvalid), http.StatusBadGateway, errMsgGenerateUnusable},
 		{"truncated", errGenerateTruncated, http.StatusBadGateway, errMsgGenerateUnusable},
 		{"call timed out", fmt.Errorf("%w: %w", errGenerateCall, context.DeadlineExceeded), http.StatusGatewayTimeout, errMsgGenerateTimeout},

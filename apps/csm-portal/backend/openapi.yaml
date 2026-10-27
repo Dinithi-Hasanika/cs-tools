@@ -4500,8 +4500,12 @@ paths:
         edited cannot be read. With a model key configured the dashboard comes
         from the model (the dashboard id is always given by the backend: the
         draft's id when it is a UUID, else a new one); without one, a sample
-        dashboard is returned for every valid request. 422 when the model
-        declines (the message says why) or refuses; 502 when its answer is not
+        dashboard is returned for every valid request. A team named in a
+        creTeam / sreTeam filter (its team registry key) is turned into that
+        team's group id before the reply. 422 when the model declines (the
+        message says why), refuses, or names a team that cannot be filtered
+        (unknown, in the wrong field, or with no group configured; the message
+        says which); 502 when its answer is not
         a usable dashboard or the model cannot be reached; 504 when it takes
         too long; 503 when generation is unavailable (no sample loaded, or the
         catalogue cannot be read).

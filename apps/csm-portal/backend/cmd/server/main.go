@@ -392,10 +392,13 @@ func main() {
 	if generateCfg.Enabled() {
 		claudeClient := claude.NewClient(claude.Config{APIKey: generateCfg.APIKey, BaseURL: generateCfg.BaseURL, Timeout: generateCfg.Timeout})
 		dashboardGenerator = handler.NewClaudeDashboardGenerator(
-			claudeClient, generateCfg.Model, generateCfg.Timeout, dashboardCatalogue)
+			claudeClient, generateCfg.Model, generateCfg.Timeout, handler.CatalogueWithTeams(dashboardCatalogue, dir.TeamResults()))
 		codeDashboardGenerator = handler.NewClaudeCodeDashboardGenerator(
 			claudeClient, generateCfg.Model, generateCfg.Timeout, catalogue.CodeSource{})
 	}
+	// A team named in a generated dashboard's creTeam / sreTeam filter (its
+	// registry key) becomes the team's group id, once, here.
+	dashboardGenerator = handler.WithDashboardTeams(dashboardGenerator, dir.TeamResults())
 	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator)
 	customDashboardHandler := handler.NewCustomDashboardHandler(customerEntityClient)
 	dashboardGenerateCodeHandler := handler.NewDashboardGenerateCodeHandler(codeDashboardGenerator)

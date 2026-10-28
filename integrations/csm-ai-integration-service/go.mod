@@ -1,6 +1,6 @@
 module github.com/wso2-open-operations/cs-tools/integrations/csm-ai-integration-service
 
-go 1.26.9
+go 1.26.10
 
 require github.com/anthropics/anthropic-sdk-go v1.78.0
 

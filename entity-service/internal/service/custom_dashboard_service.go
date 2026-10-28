@@ -165,7 +165,7 @@ func validateCustomDashboardID(id string) error {
 }
 
 // normalizeCustomDashboard trims the name and checks both fields against the
-// limits migration 0249 enforces, so a bad request is a 400 rather than a
+// limits migration 0251 enforces, so a bad request is a 400 rather than a
 // constraint error. The definition is stored as sent: it is opaque here.
 func normalizeCustomDashboard(req domain.SaveCustomDashboardRequest) (domain.SaveCustomDashboardRequest, error) {
 	name := strings.TrimSpace(req.Name)

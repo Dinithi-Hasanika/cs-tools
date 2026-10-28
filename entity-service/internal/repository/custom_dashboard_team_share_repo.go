@@ -28,7 +28,7 @@ import (
 )
 
 // CustomDashboardTeamShareRepository reads and writes which teams a saved
-// custom dashboard is shared with (migration 0251), the owner side only: it
+// custom dashboard is shared with (migration 0253), the owner side only: it
 // takes the owner and only ever touches that owner's dashboards. Who is in a
 // team is not stored here; the recipient reads join team_member when they
 // run. ids must be UUIDs; the service checks that first.

@@ -14,7 +14,7 @@
 -- specific language governing permissions and limitations
 -- under the License.
 
--- custom_dashboard_share: a saved custom dashboard (migration 0249) shared
+-- custom_dashboard_share: a saved custom dashboard (migration 0251) shared
 -- with one user, who can view it (CSM portal Shared Dashboards) but not change
 -- it. Only the dashboard's owner adds or removes rows; the service checks
 -- that, and that the user is not the owner and is internal staff. One row per

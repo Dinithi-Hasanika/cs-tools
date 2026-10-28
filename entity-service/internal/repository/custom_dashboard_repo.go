@@ -29,7 +29,7 @@ import (
 )
 
 // CustomDashboardRepository reads and writes saved custom dashboards
-// (migration 0249). Every method takes the owner and only ever sees that
+// (migration 0251). Every method takes the owner and only ever sees that
 // owner's rows: another owner's dashboard is the same as no dashboard.
 // ids must be UUIDs; the service checks that first.
 type CustomDashboardRepository interface {

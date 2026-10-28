@@ -14,9 +14,9 @@
 -- specific language governing permissions and limitations
 -- under the License.
 
--- custom_dashboard_team_share: a saved custom dashboard (migration 0249)
+-- custom_dashboard_team_share: a saved custom dashboard (migration 0251)
 -- shared with one team (Rigel, Castor, Americas, Apollo, ...), the team-level
--- sibling of custom_dashboard_share (0250). Membership is read live from
+-- sibling of custom_dashboard_share (0252). Membership is read live from
 -- team_member when a dashboard is listed, so whoever is in the team now can
 -- view it (CSM portal Shared Dashboards) and someone who leaves the team stops
 -- seeing it. Only the dashboard's owner adds or removes rows; the service

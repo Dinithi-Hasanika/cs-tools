@@ -30,7 +30,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
 
-// Limits entity-service enforces on a saved dashboard (its migration 0249),
+// Limits entity-service enforces on a saved dashboard (its migration 0251),
 // checked here first so the user gets a readable message.
 const (
 	customDashboardNameMaxLength      = 255

@@ -19,7 +19,7 @@ package domain
 import "time"
 
 // Limits on a saved custom dashboard. The name and definition limits match
-// the CHECK constraints of migration 0249.
+// the CHECK constraints of migration 0251.
 const (
 	// MaxCustomDashboards is the cap per owner, as MaxSavedFilterViews.
 	MaxCustomDashboards = 50
@@ -30,7 +30,7 @@ const (
 )
 
 // CustomDashboard is a dashboard a CSM portal user generated and saved
-// (migration 0249). Definition is the dashboard JSON as opaque text, like
+// (migration 0251). Definition is the dashboard JSON as opaque text, like
 // SavedFilterView.Qs: the CSM backend validates it, this service does not
 // parse it. The owner is never on the wire; it is always the caller.
 type CustomDashboard struct {
@@ -64,7 +64,7 @@ type SaveCustomDashboardRequest struct {
 }
 
 // CustomDashboardShare is one person a saved dashboard is shared with
-// (migration 0250), as its owner sees it: GET /users/me/dashboards/{id}/shares.
+// (migration 0252), as its owner sees it: GET /users/me/dashboards/{id}/shares.
 // A share only lets that person view the dashboard. Only the owner lists or
 // changes a dashboard's shares; a recipient never sees who else has it.
 type CustomDashboardShare struct {
@@ -86,7 +86,7 @@ type CustomDashboardTeamShareTeam struct {
 }
 
 // CustomDashboardTeamShare is one team a saved dashboard is shared with
-// (migration 0251), as its owner sees it: GET
+// (migration 0253), as its owner sees it: GET
 // /users/me/dashboards/{id}/team-shares. Whoever is in the team when the
 // dashboard is listed may view it.
 type CustomDashboardTeamShare struct {

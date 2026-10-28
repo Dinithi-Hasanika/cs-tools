@@ -29,7 +29,7 @@ import (
 )
 
 // CustomDashboardShareRepository reads and writes who a saved custom dashboard
-// is shared with (migration 0250). The owner side takes the owner and only
+// is shared with (migration 0252). The owner side takes the owner and only
 // ever touches that owner's dashboards; the recipient side takes the
 // recipient and only ever sees dashboards shared with them. ids must be UUIDs;
 // the service checks that first, and that the recipient may receive a share.
@@ -45,7 +45,7 @@ type CustomDashboardShareRepository interface {
 	// was not shared with them (or is not the owner's).
 	RemoveShare(ctx context.Context, ownerID, dashboardID, userID string) (bool, error)
 	// ListSharedWithUser is every dashboard shared with the user, directly or
-	// with a team the user is in now (migration 0251), without definitions,
+	// with a team the user is in now (migration 0253), without definitions,
 	// ordered by name. Team shares count only for internal staff and never
 	// for the dashboard's owner.
 	ListSharedWithUser(ctx context.Context, userID string) ([]domain.SharedCustomDashboardSummary, error)

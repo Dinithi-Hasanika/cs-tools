@@ -14,9 +14,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package claude builds the Anthropic API client the dashboard generator uses
-// (POST /dashboards/generate). It only sets the client up; what is sent and
-// how the reply is read belong to the generator.
+// Package claude builds the Anthropic API client every model call in this
+// service uses (POST /ai/dashboards/generate and /ai/dashboards/generate-code).
+// It only sets the client up; what is sent and how the reply is read belong to
+// each feature.
 package claude
 
 import (

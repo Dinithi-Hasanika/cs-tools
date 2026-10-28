@@ -571,14 +571,14 @@ already established for its own `/health` vs `/health/database`:
   whatever orchestrator) should wire up as the restart/drain-triggering probe.
 - **`GET /health/dependencies`** (`internal/handler/health.go`) — aggregates this backend's own
   upstream integrations: `"SCIM Service"`, `"Updates Service"`, `"CSM Notification Service"`,
-  `"CSM Integration Service"`, `"Engineering Entity Service"` — the response's `name` values are
+  `"CSM Integration Service"`, `"Engineering Entity Service"`, `"CSM AI Integration Service"` — the response's `name` values are
   human-readable display names, not package/env-var identifiers, so use these exact strings (not
   `csm-notification-service` or similar) when checking a caller against this response. This
   backend's own core `entity-service` is deliberately excluded (this backend depends on it for
   nearly every request; checking it here was an explicit product decision to leave out). Each
   listed dependency reports one of `ok`/`down`/`not_configured` — `not_configured` when that
   dependency's base URL env var is unset (`CSM_NOTIFICATION_SERVICE_BASE_URL`/
-  `CSM_INTEGRATION_SERVICE_BASE_URL`/`ENGINEERING_ENTITY_BASE_URL`, all optional; SCIM/Updates are
+  `CSM_INTEGRATION_SERVICE_BASE_URL`/`ENGINEERING_ENTITY_BASE_URL`/`CSM_AI_INTEGRATION_SERVICE_BASE_URL`, all optional; SCIM/Updates are
   always configured so only ever report `ok`/`down`). Checks run concurrently, each bounded by its
   own 5s timeout so one slow upstream can't hang the whole response. Overall `status` is `degraded`
   (HTTP `503`) if any dependency is `down`; `not_configured` never counts as a failure on its own.
@@ -610,6 +610,7 @@ Each upstream service has its own client package under `internal/`:
 | `updates` | Updates service | Product update levels; returns typed structs (not raw passthrough) |
 | `csmnotification` | `integrations/csm-notification-service` | Health check only today (`Health(ctx)`, backing `GET /health/dependencies` — see "Health endpoints" below). Optional: unconfigured (`CSM_NOTIFICATION_SERVICE_BASE_URL` unset) means this dependency reports `not_configured` |
 | `csmintegration` | `integrations/csm-integration-service` | Same shape and same one purpose as `csmnotification` above, for `integrations/csm-integration-service` |
+| `csmai` | `integrations/csm-ai-integration-service` | The dashboard generators' model calls (`POST /ai/dashboards/generate`, `/generate-code`) plus `Health(ctx)`. Optional (`CSM_AI_INTEGRATION_SERVICE_BASE_URL`, `_SCOPES`, `_TIMEOUT` default 55s; https, or http for a local host only). When set, `handler.NewServiceDashboardGenerator` / `NewServiceCodeDashboardGenerator` (`dashboard_generator_service.go`) are the generators: the service builds the prompt and calls the model; this backend still converts the draft (`draftToDefinition`), sends the registry teams that have a group, keeps the last candidate `dashboard.ParseGenerated` accepts, swaps team keys for group ids (`WithDashboardTeams`) and maps the service's error `code` to the same statuses and messages (`serviceGenerateError`). Unset: the samples. **This backend holds no model client or model SDK** (`cmd/server/no_model_sdk_test.go` fails if `go.mod` requires, or any file imports, one); the catalogues live in the service, and `internal/dashboard`'s `TestParseGenerated_TheCatalogueExampleIsValid` reads the service's `catalogue.md` so its example keeps passing this backend's check |
 
 New upstream services get their own package under `internal/` following the same `Client` + `do()` pattern. `entity` is the exception: because it hosts multiple, separately-deployed/differently-authenticated services, it uses a `<Name>Config`/`<Name>Client` pair per service/file instead of one shared `Client` for the whole package — `CustomerEntityClient`/`EngineeringEntityClient`.
 

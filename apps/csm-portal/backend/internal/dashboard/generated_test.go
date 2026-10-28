@@ -18,18 +18,28 @@ package dashboard
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard/catalogue"
 )
+
+// serviceCatalogue is integrations/csm-ai-integration-service's built-in
+// dashboard catalogue, relative to this package's directory.
+const serviceCatalogue = "../../../../../integrations/csm-ai-integration-service/internal/catalogue/catalogue.md"
 
 // catalogueExample returns the catalogue's own worked example (section 10),
 // the definition the model is shown as the target.
 func catalogueExample(t *testing.T) string {
 	t.Helper()
-	text := catalogue.Embedded()
+	// The catalogue lives with the model call, in the AI integration
+	// service; its example must still pass this backend's own check, so the
+	// two components cannot drift apart unnoticed.
+	raw, err := os.ReadFile(serviceCatalogue)
+	if err != nil {
+		t.Fatalf("read the AI integration service's catalogue (%s): %v", serviceCatalogue, err)
+	}
+	text := string(raw)
 	_, after, ok := strings.Cut(text, "## 10. A complete example")
 	if !ok {
 		t.Fatal("catalogue has no section 10 example")

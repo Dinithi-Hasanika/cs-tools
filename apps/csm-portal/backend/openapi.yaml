@@ -44,8 +44,9 @@ paths:
       summary: >-
         Aggregating dependency health check. Distinct from GET /health (a pure
         liveness probe): this checks SCIM Service, Updates Service, CSM
-        Notification Service, CSM Integration Service and Engineering Entity
-        Service (each optional except SCIM/Updates). This backend's own core
+        Notification Service, CSM Integration Service, Engineering Entity
+        Service and CSM AI Integration Service (each optional except
+        SCIM/Updates). This backend's own core
         entity-service is not checked here. Do not wire this up as the
         liveness/restart probe — a downstream blip here must not restart or
         drain an otherwise-healthy instance.
@@ -16589,7 +16590,7 @@ components:
             properties:
               name:
                 type: string
-                enum: [SCIM Service, Updates Service, CSM Notification Service, CSM Integration Service, Engineering Entity Service]
+                enum: [SCIM Service, Updates Service, CSM Notification Service, CSM Integration Service, Engineering Entity Service, CSM AI Integration Service]
               status:
                 type: string
                 description: >-

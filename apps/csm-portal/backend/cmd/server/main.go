@@ -33,11 +33,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/claude"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmai"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmintegration"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmnotification"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard/catalogue"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/googledrive"
@@ -104,27 +103,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// POST /dashboards/generate's model settings. Logged without the key; an
-	// empty key leaves generation off (the endpoint keeps its sample).
-	generateCfg, err := loadGenerateConfig(os.Getenv)
+	// integrations/csm-ai-integration-service makes the generators' model
+	// calls when CSM_AI_INTEGRATION_SERVICE_BASE_URL is set (see below).
+	aiCfg, err := loadAIIntegrationConfig(os.Getenv)
 	if err != nil {
-		slog.Error("invalid dashboard generation configuration", "err", err)
+		slog.Error("invalid AI integration service configuration", "err", err)
 		os.Exit(1)
 	}
-	dashboardCatalogue, err := catalogue.New(generateCfg.CatalogueFile)
-	if err != nil {
-		slog.Error("invalid dashboard generation configuration", "err", err)
-		os.Exit(1)
-	}
-	slog.Info("dashboard generation",
-		"enabled", generateCfg.Enabled(), "model", generateCfg.Model, "timeout", generateCfg.Timeout,
-		"gateway", generateCfg.GatewayHost(),
-		"catalogue", dashboardCatalogue.Origin())
-	if generateCfg.Enabled() && generateCfg.Timeout >= reqTimeouts.RESTWrite {
-		// The response would be cut off before a slow generation finishes,
-		// instead of answering 504.
-		slog.Warn("DASHBOARD_GENERATE_TIMEOUT should be shorter than REST_WRITE_TIMEOUT",
-			"generateTimeout", generateCfg.Timeout, "writeTimeout", reqTimeouts.RESTWrite)
+	if aiCfg.Enabled() && aiCfg.Timeout >= reqTimeouts.RESTWrite {
+		slog.Warn("CSM_AI_INTEGRATION_SERVICE_TIMEOUT should be shorter than REST_WRITE_TIMEOUT",
+			"aiTimeout", aiCfg.Timeout, "writeTimeout", reqTimeouts.RESTWrite)
 	}
 
 	// All upstream service clients (entity, updates, SCIM, and future notification
@@ -365,7 +353,23 @@ func main() {
 	if engineeringEntityClient != nil {
 		engineeringPinger = engineeringEntityClient
 	}
-	healthHandler := handler.NewHealthHandler(scimClient, updatesClient, notificationPinger, integrationPinger, engineeringPinger)
+	// aiClient stays nil (and aiPinger an untyped nil) when the service is
+	// not configured; see notificationPinger above for the typed-nil pitfall.
+	var aiClient *csmai.Client
+	var aiPinger handler.HealthPinger
+	if aiCfg.Enabled() {
+		aiClient = csmai.NewClient(csmai.Config{
+			BaseURL:      aiCfg.BaseURL,
+			TokenURL:     oauth2TokenURL,
+			ClientID:     oauth2ClientID,
+			ClientSecret: oauth2ClientSecret,
+			Scopes:       aiCfg.Scopes,
+			Timeout:      aiCfg.Timeout,
+		})
+		aiPinger = aiClient
+	}
+	healthHandler := handler.NewHealthHandler(scimClient, updatesClient, notificationPinger, integrationPinger, engineeringPinger).
+		WithAIIntegration(aiPinger)
 
 	// timecardApproverRoleIDs is optional: empty means none of
 	// AUTH_TIMECARD_APPROVER_ROLES' real role names has a configured ID, in
@@ -382,20 +386,16 @@ func main() {
 		WithGrantableRoles(grantableRoles)
 	grantableRolesHandler := handler.NewGrantableRolesHandler(grantableRoles)
 	dashboardHandler := handler.NewDashboardHandler(accessGuard)
-	// The sample generator until the model call exists; see generate_config.go.
-	// With a key, chat messages go to Claude (through the gateway when
-	// DASHBOARD_GENERATE_BASE_URL is set); without one, the sample answers.
+	// The AI integration service makes the model calls when configured
+	// (CSM_AI_INTEGRATION_SERVICE_BASE_URL); without it, each generate page
+	// answers with its fixed sample. This backend holds no model client.
 	dashboardGenerator := handler.NewSampleDashboardGenerator()
-	// Experimental code-based generate page: the same model settings, its own
-	// catalogue (code_catalogue.md), its own sample without a key.
 	codeDashboardGenerator := handler.NewSampleCodeDashboardGenerator()
-	if generateCfg.Enabled() {
-		claudeClient := claude.NewClient(claude.Config{APIKey: generateCfg.APIKey, BaseURL: generateCfg.BaseURL, Timeout: generateCfg.Timeout})
-		dashboardGenerator = handler.NewClaudeDashboardGenerator(
-			claudeClient, generateCfg.Model, generateCfg.Timeout, handler.CatalogueWithTeams(dashboardCatalogue, dir.TeamResults()))
-		codeDashboardGenerator = handler.NewClaudeCodeDashboardGenerator(
-			claudeClient, generateCfg.Model, generateCfg.Timeout, catalogue.CodeSource{})
+	if aiClient != nil {
+		dashboardGenerator = handler.NewServiceDashboardGenerator(aiClient, dir.TeamResults())
+		codeDashboardGenerator = handler.NewServiceCodeDashboardGenerator(aiClient)
 	}
+	slog.Info("dashboard generation", "aiIntegrationService", aiClient != nil, "timeout", aiCfg.Timeout)
 	// A team named in a generated dashboard's creTeam / sreTeam filter (its
 	// registry key) becomes the team's group id, once, here.
 	dashboardGenerator = handler.WithDashboardTeams(dashboardGenerator, dir.TeamResults())

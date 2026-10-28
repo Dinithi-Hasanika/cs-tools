@@ -56,8 +56,7 @@ const generateSampleDashboardID = "5e636a12-4c0c-4d86-9ee5-6f4e0eddf981"
 
 // sampleDashboardGenerator answers every message with
 // generateSampleDashboardID from the registry, ignoring the prompt and the
-// draft. It stands in until the model is called, and stays the fallback when
-// no API key is configured.
+// draft. It is the fallback when no AI integration service is configured.
 type sampleDashboardGenerator struct{}
 
 // NewSampleDashboardGenerator returns the sample generator.

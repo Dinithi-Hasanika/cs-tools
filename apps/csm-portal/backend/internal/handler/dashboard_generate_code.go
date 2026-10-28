@@ -50,7 +50,7 @@ const sampleCodeDashboardReply = "Here is a sample code dashboard: your open cas
 	"This is a fixed sample: dashboard generation is not configured."
 
 // sampleCodeDashboardSource is the dashboard the sample generator returns
-// for every message (no API key configured). It shows the shape generated
+// for every message (no AI integration service configured). It shows the shape generated
 // code takes (code_catalogue.md): a `render(portal, root)` function that
 // asks for its data through the fixed portal APIs (`portal.currentUser`,
 // `portal.countCases`, `portal.searchCases`) and draws into `root`. It
@@ -100,8 +100,8 @@ const sampleCodeDashboardSource = `async function render(portal, root) {
 // experimental code-based counterpart of POST /dashboards/generate: a chat
 // message is turned into dashboard source code instead of a dashboard
 // definition. It checks the request and asks its CodeDashboardGenerator
-// (Claude with the code catalogue, or the sample without an API key; decided
-// in main.go). It shares the prompt checks and writeGenerateError's status
+// (the AI integration service, or the sample when it is not configured;
+// decided in main.go). It shares the prompt checks and writeGenerateError's status
 // mapping with DashboardGenerateHandler and changes nothing on that path.
 // The source is not checked beyond defining a render function: it runs only
 // in the webapp's sandboxed frame, where its data comes through the fixed

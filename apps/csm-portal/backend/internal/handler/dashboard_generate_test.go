@@ -21,12 +21,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/csmai"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
 )
 
@@ -345,30 +347,58 @@ func TestGenerateDashboard_MapsEachGeneratorError(t *testing.T) {
 	}
 }
 
-// End to end through the real client and a fake gateway: what the SDK really
-// returns for each outcome reaches the right status.
-func TestGenerateDashboard_ThroughTheClaudeGenerator(t *testing.T) {
+// End to end through the real csmai client and a fake AI integration
+// service: what the service answers for each outcome reaches the right status
+// and message.
+func TestGenerateDashboard_ThroughTheAIIntegrationService(t *testing.T) {
 	cases := []struct {
 		name       string
-		gw         *fakeGateway
+		status     int
+		body       string
 		timeout    time.Duration
+		delay      time.Duration
 		wantStatus int
+		wantMsg    string
 	}{
-		{"dashboard", &fakeGateway{text: validGenerated}, 5 * time.Second, http.StatusOK},
-		{"declined", &fakeGateway{text: `{"error":"Not in the catalogue."}`}, 5 * time.Second, http.StatusUnprocessableEntity},
-		{"not a dashboard", &fakeGateway{text: "Sorry, no."}, 5 * time.Second, http.StatusBadGateway},
-		{"bad key at the gateway", &fakeGateway{status: http.StatusUnauthorized, body: `{"error":"Unauthorized","message":"Valid API key required"}`}, 5 * time.Second, http.StatusBadGateway},
-		{"gateway too slow", &fakeGateway{text: validGenerated, delay: 3 * time.Second}, 200 * time.Millisecond, http.StatusGatewayTimeout},
+		{"dashboard", http.StatusOK, `{"candidates":[` + validGenerated + `],"usage":{}}`, 5 * time.Second, 0, http.StatusOK, ""},
+		{"declined", http.StatusOK, `{"declined":"Not in the catalogue.","usage":{}}`, 5 * time.Second, 0, http.StatusUnprocessableEntity, "Not in the catalogue."},
+		{"no valid candidate", http.StatusOK, `{"candidates":[{"displayName":"x"}],"usage":{}}`, 5 * time.Second, 0, http.StatusBadGateway, errMsgGenerateUnusable},
+		{"refused", http.StatusUnprocessableEntity, `{"code":"refused","message":"m"}`, 5 * time.Second, 0, http.StatusUnprocessableEntity, errMsgGenerateRefused},
+		{"model timed out", http.StatusGatewayTimeout, `{"code":"timeout","message":"m"}`, 5 * time.Second, 0, http.StatusGatewayTimeout, errMsgGenerateTimeout},
+		{"no key in the service", http.StatusServiceUnavailable, `{"code":"not_configured","message":"m"}`, 5 * time.Second, 0, http.StatusServiceUnavailable, errMsgGenerateUnavailable},
+		{"service unauthorised", http.StatusUnauthorized, `{"error":"Unauthorized"}`, 5 * time.Second, 0, http.StatusBadGateway, errMsgGenerateCall},
+		{"service too slow", http.StatusOK, `{"candidates":[` + validGenerated + `]}`, 200 * time.Millisecond, 3 * time.Second, http.StatusGatewayTimeout, errMsgGenerateTimeout},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gen := newClaudeTestGenerator(t, tc.gw, fixedCatalogue{text: "CATALOGUE"}, tc.timeout)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/token" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
+					return
+				}
+				if tc.delay > 0 {
+					select {
+					case <-time.After(tc.delay):
+					case <-r.Context().Done():
+						return
+					}
+				}
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(srv.Close)
+			client := csmai.NewClient(csmai.Config{BaseURL: srv.URL, TokenURL: srv.URL + "/token", ClientID: "id", ClientSecret: "s", Timeout: tc.timeout})
+			gen := NewServiceDashboardGenerator(client, nil)
 			w := httptest.NewRecorder()
 			NewDashboardGenerateHandler(gen).GenerateDashboard(w, withUser(newGenerateRequest(`{"prompt":"Top 10 customers by open cases."}`)))
 			if w.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body: %s", w.Code, tc.wantStatus, w.Body.String())
 			}
 			if tc.wantStatus != http.StatusOK {
+				if !strings.Contains(w.Body.String(), tc.wantMsg) {
+					t.Errorf("body = %s, want the message %q", w.Body.String(), tc.wantMsg)
+				}
 				return
 			}
 			resp := decodeJSON[generateDashboardResponse](t, w)

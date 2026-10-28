@@ -154,6 +154,17 @@ type CustomDashboardShareService interface {
 	GetSharedWithMe(ctx context.Context, dashboardID string) (domain.SharedCustomDashboard, error)
 }
 
+// CustomDashboardTeamShareService shares the caller's saved dashboards with
+// teams (team table), view only. Postgres-only; the caller is resolved from
+// x-user-id-token, and only a dashboard's owner lists or changes its team
+// shares. The team's members see the dashboard through
+// CustomDashboardShareService's ListSharedWithMe / GetSharedWithMe.
+type CustomDashboardTeamShareService interface {
+	ListTeamShares(ctx context.Context, dashboardID string) (domain.CustomDashboardTeamShareList, error)
+	AddTeamShare(ctx context.Context, dashboardID, teamID string) (domain.CustomDashboardTeamShareList, error)
+	RemoveTeamShare(ctx context.Context, dashboardID, teamID string) error
+}
+
 // RunbookService manages the alert-name to runbook catalog (Operations > Runbooks).
 type RunbookService interface {
 	List(ctx context.Context) (domain.RunbookList, error)

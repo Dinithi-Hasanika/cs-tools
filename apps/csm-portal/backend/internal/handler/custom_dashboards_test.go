@@ -28,6 +28,7 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 )
 
@@ -43,7 +44,33 @@ type fakeCustomDashboardClient struct {
 	shares         []entity.CustomDashboardShare
 	sharedList     []entity.SharedCustomDashboardSummary
 	shared         entity.SharedCustomDashboard
+	gotTeamID      string
+	teamShares     []entity.CustomDashboardTeamShare
 	err            error
+}
+
+func (f *fakeCustomDashboardClient) ListCustomDashboardTeamShares(_ context.Context, id string) ([]entity.CustomDashboardTeamShare, error) {
+	f.called = true
+	f.gotID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.teamShares, nil
+}
+
+func (f *fakeCustomDashboardClient) AddCustomDashboardTeamShare(_ context.Context, id, teamID string) ([]entity.CustomDashboardTeamShare, error) {
+	f.called = true
+	f.gotID, f.gotTeamID = id, teamID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.teamShares, nil
+}
+
+func (f *fakeCustomDashboardClient) RemoveCustomDashboardTeamShare(_ context.Context, id, teamID string) error {
+	f.called = true
+	f.gotID, f.gotTeamID = id, teamID
+	return f.err
 }
 
 func (f *fakeCustomDashboardClient) GetCustomDashboard(_ context.Context, id string) (entity.CustomDashboard, error) {
@@ -240,8 +267,8 @@ func TestSaveCustomDashboard_RejectsBeforeCallingEntity(t *testing.T) {
 		{"another dashboard's id", testCustomDashboardID, saveBody(t, otherDraft), errMsgCustomDashboardIDMismatch},
 		{"field the served form lacks", testCustomDashboardID, saveBody(t, withField("restricted", "true")), errMsgCustomDashboardInvalid},
 		{"isDefault", testCustomDashboardID, saveBody(t, withField("isDefault", "true")), errMsgCustomDashboardInvalid},
-		{"not a case-family widget", testCustomDashboardID, saveBody(t, withField("widgets",
-			`[{"widgetId":"inc","displayName":"Incidents","resourceType":"incident","shape":"count","gridWidth":3,"query":{}}]`)), errMsgCustomDashboardInvalid},
+		{"a resource type generation does not support", testCustomDashboardID, saveBody(t, withField("widgets",
+			`[{"widgetId":"inc","displayName":"Incident Tasks","resourceType":"incident_task","shape":"count","gridWidth":3,"query":{}}]`)), errMsgCustomDashboardInvalid},
 		{"blank name", testCustomDashboardID, saveBody(t, withField("displayName", `"   "`)), ""},
 		{"name too long", testCustomDashboardID, saveBody(t, withField("displayName", `"`+strings.Repeat("é", customDashboardNameMaxLength+1)+`"`)), errMsgCustomDashboardNameTooLong},
 		{"definition too large", testCustomDashboardID, saveBody(t, withField("widgets", bigWidgets)), errMsgCustomDashboardTooLarge},
@@ -438,7 +465,7 @@ func TestGetCustomDashboard_RejectsBadIDAndNoUser(t *testing.T) {
 }
 
 func TestGetCustomDashboard_OutdatedDefinitionIs422(t *testing.T) {
-	stored := `{"id":"x","displayName":"Old","type":"cs","widgets":[{"id":"inc","displayName":"Incidents","resourceType":"incident","shape":"count","gridWidth":3,"query":{}}]}`
+	stored := `{"id":"x","displayName":"Old","type":"cs","widgets":[{"id":"inc","displayName":"Incident Tasks","resourceType":"incident_task","shape":"count","gridWidth":3,"query":{}}]}`
 	client := &fakeCustomDashboardClient{stored: entity.CustomDashboard{ID: testCustomDashboardID, Definition: stored}}
 
 	w := getCustomDashboard(client, testCustomDashboardID)
@@ -747,7 +774,7 @@ func TestGetSharedDashboard_ServesTheOwnersVersion(t *testing.T) {
 }
 
 func TestGetSharedDashboard_OutdatedAsksForTheOwner(t *testing.T) {
-	stored := `{"id":"x","displayName":"Old","type":"cs","widgets":[{"id":"inc","displayName":"Incidents","resourceType":"incident","shape":"count","gridWidth":3,"query":{}}]}`
+	stored := `{"id":"x","displayName":"Old","type":"cs","widgets":[{"id":"inc","displayName":"Incident Tasks","resourceType":"incident_task","shape":"count","gridWidth":3,"query":{}}]}`
 	client := &fakeCustomDashboardClient{shared: entity.SharedCustomDashboard{ID: testCustomDashboardID, Definition: stored, Owner: janeOwner()}}
 	w := serveSharedRoute(client, "/dashboards/shared/"+testCustomDashboardID)
 	if w.Code != http.StatusUnprocessableEntity {
@@ -799,5 +826,170 @@ func TestSharedDashboards_UpstreamErrorsAreGeneric(t *testing.T) {
 				t.Errorf("message = %q, want %q", got.Message, tc.msg)
 			}
 		})
+	}
+}
+
+// Team shares: the registry (testTeamShareRegistry) gives rigel a CRE group,
+// apollo an SRE group, and orion none (so it cannot be shared with).
+const (
+	testTeamShareRigelID  = "391737f4-0588-2f9f-9bdd-b18d39f83d9a"
+	testTeamShareApolloID = "f9e9df56-1215-e316-c6f2-ce9180c0af64"
+)
+
+func testTeamShareRegistry() []directory.TeamResult {
+	return []directory.TeamResult{
+		{ID: "apollo", Name: "Apollo", Family: "sre-abt", SreGroupID: testTeamShareApolloID},
+		{ID: "orion", Name: "Orion", Family: "cre-abt"},
+		{ID: "rigel", Name: "Rigel", Family: "cre-abt", CreGroupID: strings.ToUpper(testTeamShareRigelID)},
+	}
+}
+
+func serveTeamShareRoute(client *fakeCustomDashboardClient, method, path string) *httptest.ResponseRecorder {
+	h := NewCustomDashboardHandler(client).WithTeams(testTeamShareRegistry())
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /dashboards/custom/{id}/team-shares", h.ListCustomDashboardTeamShares)
+	mux.HandleFunc("PUT /dashboards/custom/{id}/team-shares/{teamKey}", h.AddCustomDashboardTeamShare)
+	mux.HandleFunc("DELETE /dashboards/custom/{id}/team-shares/{teamKey}", h.RemoveCustomDashboardTeamShare)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, withUser(httptest.NewRequest(method, path, nil)))
+	return w
+}
+
+func rigelTeamShare() []entity.CustomDashboardTeamShare {
+	return []entity.CustomDashboardTeamShare{{Team: entity.CustomDashboardTeam{ID: testTeamShareRigelID, Name: "Rigel", Type: "cre-abt"}, SharedOn: "2026-10-27T11:23:23Z"}}
+}
+
+func TestListCustomDashboardTeamShares_NamesTeamsByKey(t *testing.T) {
+	client := &fakeCustomDashboardClient{teamShares: append(rigelTeamShare(),
+		// No longer in the registry: listed by name, with no key.
+		entity.CustomDashboardTeamShare{Team: entity.CustomDashboardTeam{ID: "00000000-0000-4000-8000-0000000000ee", Name: "Old Team", Type: "cre"}, SharedOn: "x"})}
+	w := serveTeamShareRoute(client, http.MethodGet, "/dashboards/custom/"+strings.ToUpper(testCustomDashboardID)+"/team-shares")
+	if w.Code != http.StatusOK || client.gotID != testCustomDashboardID {
+		t.Fatalf("status %d, id %q: %s", w.Code, client.gotID, w.Body.String())
+	}
+	got := decodeJSON[customDashboardTeamShareListResponse](t, w)
+	want := []customDashboardTeamShareTeam{{Key: "rigel", Name: "Rigel", Family: "cre-abt"}, {Key: "", Name: "Old Team", Family: "cre"}}
+	if len(got.Shares) != 2 || got.Shares[0].Team != want[0] || got.Shares[1].Team != want[1] || got.Shares[0].SharedOn == "" {
+		t.Fatalf("shares = %+v, want %+v", got.Shares, want)
+	}
+}
+
+func TestListCustomDashboardTeamShares_EmptyIsAnEmptyArray(t *testing.T) {
+	w := serveTeamShareRoute(&fakeCustomDashboardClient{}, http.MethodGet, "/dashboards/custom/"+testCustomDashboardID+"/team-shares")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"shares":[]}` {
+		t.Fatalf("status %d, body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAddCustomDashboardTeamShare_SendsTheTeamsGroupID(t *testing.T) {
+	cases := []struct{ key, wantID string }{
+		{"rigel", testTeamShareRigelID},   // CRE group, lower-cased
+		{"RIGEL", testTeamShareRigelID},   // key in any case
+		{"apollo", testTeamShareApolloID}, // SRE group
+	}
+	for _, tc := range cases {
+		client := &fakeCustomDashboardClient{teamShares: rigelTeamShare()}
+		w := serveTeamShareRoute(client, http.MethodPut, "/dashboards/custom/"+testCustomDashboardID+"/team-shares/"+tc.key)
+		if w.Code != http.StatusOK || client.gotTeamID != tc.wantID || client.gotID != testCustomDashboardID {
+			t.Errorf("%s: status %d, team id %q (want %q): %s", tc.key, w.Code, client.gotTeamID, tc.wantID, w.Body.String())
+		}
+		if got := decodeJSON[customDashboardTeamShareListResponse](t, w); len(got.Shares) != 1 || got.Shares[0].Team.Key != "rigel" {
+			t.Errorf("%s: body = %+v", tc.key, got)
+		}
+	}
+}
+
+func TestRemoveCustomDashboardTeamShare(t *testing.T) {
+	client := &fakeCustomDashboardClient{}
+	w := serveTeamShareRoute(client, http.MethodDelete, "/dashboards/custom/"+testCustomDashboardID+"/team-shares/apollo")
+	if w.Code != http.StatusNoContent || w.Body.Len() != 0 || client.gotTeamID != testTeamShareApolloID {
+		t.Fatalf("status %d, body %q, team %q", w.Code, w.Body.String(), client.gotTeamID)
+	}
+}
+
+func TestCustomDashboardTeamShares_RefusedWithoutAnUpstreamCall(t *testing.T) {
+	cases := []struct {
+		name, method, path string
+		want               int
+		msg                string
+	}{
+		{"list, bad id", http.MethodGet, "/dashboards/custom/abc/team-shares", http.StatusBadRequest, ErrMsgInvalidUUID},
+		{"add, bad id", http.MethodPut, "/dashboards/custom/abc/team-shares/rigel", http.StatusBadRequest, ErrMsgInvalidUUID},
+		{"add, unknown team", http.MethodPut, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/vega", http.StatusNotFound, errMsgTeamShareUnknownTeam},
+		{"add, team with no group", http.MethodPut, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/orion", http.StatusNotFound, errMsgTeamShareUnknownTeam},
+		{"add, a team id instead of a key", http.MethodPut, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/" + testTeamShareRigelID, http.StatusNotFound, errMsgTeamShareUnknownTeam},
+		{"remove, unknown team", http.MethodDelete, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/vega", http.StatusNotFound, errMsgTeamShareUnknownTeam},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeCustomDashboardClient{}
+			w := serveTeamShareRoute(client, tc.method, tc.path)
+			if w.Code != tc.want || client.called {
+				t.Fatalf("status %d, called %v; want %d and no upstream call", w.Code, client.called, tc.want)
+			}
+			if got := decodeJSON[errorBody](t, w); got.Message != tc.msg {
+				t.Errorf("message = %q, want %q", got.Message, tc.msg)
+			}
+		})
+	}
+
+	handlers := map[string]func(*CustomDashboardHandler) http.HandlerFunc{
+		"list":   func(h *CustomDashboardHandler) http.HandlerFunc { return h.ListCustomDashboardTeamShares },
+		"add":    func(h *CustomDashboardHandler) http.HandlerFunc { return h.AddCustomDashboardTeamShare },
+		"remove": func(h *CustomDashboardHandler) http.HandlerFunc { return h.RemoveCustomDashboardTeamShare },
+	}
+	for name, pick := range handlers {
+		client := &fakeCustomDashboardClient{}
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.SetPathValue("id", testCustomDashboardID)
+		req.SetPathValue("teamKey", "rigel")
+		w := httptest.NewRecorder()
+		pick(NewCustomDashboardHandler(client).WithTeams(testTeamShareRegistry()))(w, req)
+		if w.Code != http.StatusUnauthorized || client.called {
+			t.Errorf("%s without a user: status %d, called %v; want 401 and no upstream call", name, w.Code, client.called)
+		}
+	}
+}
+
+func TestCustomDashboardTeamShares_UpstreamErrors(t *testing.T) {
+	cases := []struct {
+		name, method, path string
+		status, want       int
+		msg                string
+	}{
+		{"list not the owner's", http.MethodGet, "/dashboards/custom/" + testCustomDashboardID + "/team-shares", http.StatusNotFound, http.StatusNotFound, ErrMsgNotFound},
+		{"list failed", http.MethodGet, "/dashboards/custom/" + testCustomDashboardID + "/team-shares", http.StatusInternalServerError, http.StatusInternalServerError, errMsgTeamSharesFailed},
+		{"add, dashboard gone", http.MethodPut, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/rigel", http.StatusNotFound, http.StatusNotFound, ErrMsgNotFound},
+		{"add failed", http.MethodPut, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/rigel", http.StatusInternalServerError, http.StatusInternalServerError, errMsgTeamShareFailed},
+		{"remove not shared", http.MethodDelete, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/rigel", http.StatusNotFound, http.StatusNotFound, ErrMsgNotFound},
+		{"remove failed", http.MethodDelete, "/dashboards/custom/" + testCustomDashboardID + "/team-shares/rigel", http.StatusInternalServerError, http.StatusInternalServerError, errMsgTeamUnshareFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeCustomDashboardClient{err: &apierror.Error{StatusCode: tc.status, Body: `{"code":0,"message":"upstream detail"}`}}
+			w := serveTeamShareRoute(client, tc.method, tc.path)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.want, w.Body.String())
+			}
+			if got := decodeJSON[errorBody](t, w); got.Message != tc.msg {
+				t.Errorf("message = %q, want %q", got.Message, tc.msg)
+			}
+		})
+	}
+}
+
+func TestSharedDashboards_PassTheTeamOn(t *testing.T) {
+	rigel := &entity.CustomDashboardTeam{ID: testTeamShareRigelID, Name: "Rigel", Type: "cre-abt"}
+	client := &fakeCustomDashboardClient{sharedList: []entity.SharedCustomDashboardSummary{
+		{ID: testCustomDashboardID, Name: "Live Save Test", Owner: janeOwner(), SharedViaTeam: rigel, SharedOn: "a", UpdatedOn: "b"},
+	}}
+	w := serveSharedRoute(client, "/dashboards/shared")
+	if got := decodeJSON[sharedDashboardListResponse](t, w); w.Code != http.StatusOK || len(got.Dashboards) != 1 || got.Dashboards[0].SharedViaTeam == nil || got.Dashboards[0].SharedViaTeam.Name != "Rigel" {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	// A direct share says so with null, not by leaving the field out.
+	client.sharedList[0].SharedViaTeam = nil
+	if w := serveSharedRoute(client, "/dashboards/shared"); !strings.Contains(w.Body.String(), `"sharedViaTeam":null`) {
+		t.Fatalf("body = %s, want sharedViaTeam null", w.Body.String())
 	}
 }

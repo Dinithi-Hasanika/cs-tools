@@ -127,6 +127,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 
 	var customDashboardHandler *handler.CustomDashboardHandler
 	var customDashboardShareHandler *handler.CustomDashboardShareHandler
+	var customDashboardTeamShareHandler *handler.CustomDashboardTeamShareHandler
 	if db != nil {
 		customDashboardRepo := repository.NewCustomDashboardRepository(db)
 		customDashboardHandler = handler.NewCustomDashboardHandler(
@@ -134,6 +135,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		)
 		customDashboardShareHandler = handler.NewCustomDashboardShareHandler(
 			service.NewCustomDashboardShareService(repository.NewCustomDashboardShareRepository(db), customDashboardRepo, userRepo),
+		)
+		customDashboardTeamShareHandler = handler.NewCustomDashboardTeamShareHandler(
+			service.NewCustomDashboardTeamShareService(repository.NewCustomDashboardTeamShareRepository(db), customDashboardRepo, userRepo),
 		)
 	}
 
@@ -1967,6 +1971,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("DELETE /users/me/dashboards/{id}/shares/{userId}", customDashboardShareHandler.RemoveShare)
 		mux.HandleFunc("GET /users/me/shared-dashboards", customDashboardShareHandler.ListSharedWithMe)
 		mux.HandleFunc("GET /users/me/shared-dashboards/{id}", customDashboardShareHandler.GetSharedWithMe)
+	}
+	if customDashboardTeamShareHandler != nil {
+		// Sharing the caller's saved dashboards with teams (owner); the
+		// members read them through the shared-dashboards routes above.
+		mux.HandleFunc("GET /users/me/dashboards/{id}/team-shares", customDashboardTeamShareHandler.ListTeamShares)
+		mux.HandleFunc("PUT /users/me/dashboards/{id}/team-shares/{teamId}", customDashboardTeamShareHandler.AddTeamShare)
+		mux.HandleFunc("DELETE /users/me/dashboards/{id}/team-shares/{teamId}", customDashboardTeamShareHandler.RemoveTeamShare)
 	}
 
 	if membershipRegistrationHandler != nil {

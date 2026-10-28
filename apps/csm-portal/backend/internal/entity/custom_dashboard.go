@@ -132,14 +132,36 @@ type customDashboardShareListResponse struct {
 	Shares []CustomDashboardShare `json:"shares"`
 }
 
+// CustomDashboardTeam is a team a dashboard is shared with, as entity-service
+// names it: the team table's id (the team's group id), name and type (e.g.
+// "cre-abt").
+type CustomDashboardTeam struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// CustomDashboardTeamShare is one team a saved dashboard is shared with, as
+// its owner sees it.
+type CustomDashboardTeamShare struct {
+	Team     CustomDashboardTeam `json:"team"`
+	SharedOn string              `json:"sharedOn"`
+}
+
+type customDashboardTeamShareListResponse struct {
+	Shares []CustomDashboardTeamShare `json:"shares"`
+}
+
 // SharedCustomDashboardSummary is one dashboard another user shared with the
-// caller, without its definition.
+// caller, without its definition. SharedViaTeam is the caller's team it was
+// shared with; nil when it was shared with the caller directly.
 type SharedCustomDashboardSummary struct {
-	ID        string                `json:"id"`
-	Name      string                `json:"name"`
-	Owner     CustomDashboardPerson `json:"owner"`
-	SharedOn  string                `json:"sharedOn"`
-	UpdatedOn string                `json:"updatedOn"`
+	ID            string                `json:"id"`
+	Name          string                `json:"name"`
+	Owner         CustomDashboardPerson `json:"owner"`
+	SharedViaTeam *CustomDashboardTeam  `json:"sharedViaTeam"`
+	SharedOn      string                `json:"sharedOn"`
+	UpdatedOn     string                `json:"updatedOn"`
 }
 
 type sharedCustomDashboardListResponse struct {
@@ -147,14 +169,16 @@ type sharedCustomDashboardListResponse struct {
 }
 
 // SharedCustomDashboard is one dashboard shared with the caller, with its
-// definition (the owner's current version, view only).
+// definition (the owner's current version, view only). SharedViaTeam as in
+// SharedCustomDashboardSummary.
 type SharedCustomDashboard struct {
-	ID         string                `json:"id"`
-	Name       string                `json:"name"`
-	Definition string                `json:"definition"`
-	Owner      CustomDashboardPerson `json:"owner"`
-	SharedOn   string                `json:"sharedOn"`
-	UpdatedOn  string                `json:"updatedOn"`
+	ID            string                `json:"id"`
+	Name          string                `json:"name"`
+	Definition    string                `json:"definition"`
+	Owner         CustomDashboardPerson `json:"owner"`
+	SharedViaTeam *CustomDashboardTeam  `json:"sharedViaTeam"`
+	SharedOn      string                `json:"sharedOn"`
+	UpdatedOn     string                `json:"updatedOn"`
 }
 
 func customDashboardSharePath(id, userID string) string {
@@ -229,4 +253,47 @@ func (c *CustomerEntityClient) GetSharedCustomDashboard(ctx context.Context, id 
 		return SharedCustomDashboard{}, fmt.Errorf("entity: decode shared custom dashboard: %w", err)
 	}
 	return d, nil
+}
+
+func customDashboardTeamSharePath(id, teamID string) string {
+	return customDashboardPath(id) + "/team-shares/" + url.PathEscape(teamID)
+}
+
+func decodeTeamShareList(raw []byte) ([]CustomDashboardTeamShare, error) {
+	var resp customDashboardTeamShareListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("entity: decode custom dashboard team shares: %w", err)
+	}
+	if resp.Shares == nil {
+		resp.Shares = []CustomDashboardTeamShare{}
+	}
+	return resp.Shares, nil
+}
+
+// ListCustomDashboardTeamShares calls GET /users/me/dashboards/{id}/team-shares
+// (owner only: another user's dashboard is a 404). Never nil on success.
+func (c *CustomerEntityClient) ListCustomDashboardTeamShares(ctx context.Context, id string) ([]CustomDashboardTeamShare, error) {
+	raw, err := c.do(ctx, http.MethodGet, customDashboardPath(id)+"/team-shares", nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeTeamShareList(raw)
+}
+
+// AddCustomDashboardTeamShare calls PUT /users/me/dashboards/{id}/team-shares/{teamId}
+// (no body) and returns the dashboard's team shares after the change. An
+// unknown team or dashboard is a 404.
+func (c *CustomerEntityClient) AddCustomDashboardTeamShare(ctx context.Context, id, teamID string) ([]CustomDashboardTeamShare, error) {
+	raw, err := c.do(ctx, http.MethodPut, customDashboardTeamSharePath(id, teamID), nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeTeamShareList(raw)
+}
+
+// RemoveCustomDashboardTeamShare calls DELETE /users/me/dashboards/{id}/team-shares/{teamId}
+// (204); not shared with that team is a 404.
+func (c *CustomerEntityClient) RemoveCustomDashboardTeamShare(ctx context.Context, id, teamID string) error {
+	_, err := c.do(ctx, http.MethodDelete, customDashboardTeamSharePath(id, teamID), nil)
+	return err
 }

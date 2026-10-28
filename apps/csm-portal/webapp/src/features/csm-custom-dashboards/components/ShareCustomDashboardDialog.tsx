@@ -28,10 +28,12 @@ import {
   InputAdornment,
   Skeleton,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Search, X } from "@wso2/oxygen-ui-icons-react";
+import { Search, Users, X } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useMemo, useState } from "react";
 import { BackendApiError } from "@api/backend/client";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
@@ -43,6 +45,13 @@ import {
   useGetCustomDashboardShares,
   usePutCustomDashboardShare,
 } from "@features/csm-custom-dashboards/api/useDashboardShares";
+import {
+  useDeleteCustomDashboardTeamShare,
+  useGetCustomDashboardTeamShares,
+  usePutCustomDashboardTeamShare,
+} from "@features/csm-custom-dashboards/api/useDashboardTeamShares";
+import { useTeams } from "@features/csm-dashboard/api/useTeams";
+import type { BeTeam } from "@api/backend/types";
 
 interface ShareCustomDashboardDialogProps {
   open: boolean;
@@ -66,12 +75,54 @@ function shareErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+type ShareMode = "people" | "teams";
+
 /**
- * Shares one of the caller's saved dashboards, view only. A search over
+ * Team families in the order the Teams list shows them, with their labels.
+ * Each team is its own target: inside CRE ABT, Rigel and Castor are shared
+ * with separately.
+ */
+const TEAM_FAMILIES: { family: string; label: string }[] = [
+  { family: "cre-abt", label: "CRE ABT" },
+  { family: "cre", label: "CRE" },
+  { family: "sre-abt", label: "SRE ABT" },
+  { family: "sre", label: "SRE" },
+];
+
+function familyLabel(family: string | undefined): string {
+  return TEAM_FAMILIES.find((f) => f.family === family)?.label ?? "Team";
+}
+
+/**
+ * The teams that can be chosen: registry teams (they have a family) with a
+ * group configured, by family in TEAM_FAMILIES order, then by name. The
+ * backend refuses any other team.
+ */
+function groupShareableTeams(teams: BeTeam[], query: string, sharedKeys: Set<string>): { label: string; teams: BeTeam[] }[] {
+  const q = query.toLowerCase();
+  const shareable = teams.filter(
+    (t) =>
+      !!t.family &&
+      (!!t.creGroupId || !!t.sreGroupId) &&
+      !sharedKeys.has(t.id) &&
+      (q === "" || t.name.toLowerCase().includes(q)),
+  );
+  return TEAM_FAMILIES.map(({ family, label }) => ({
+    label,
+    teams: shareable.filter((t) => t.family === family).sort((a, b) => a.name.localeCompare(b.name)),
+  })).filter((g) => g.teams.length > 0);
+}
+
+/**
+ * Shares one of the caller's saved dashboards, view only, with people or
+ * teams (a People / Teams toggle above the search). People: a search over
  * internal staff (the Assign engineer dialog's search: `POST /users/search`,
  * internal roles, active only), where clicking a person shares with them;
  * below it, who it is shared with, each with a remove button. The caller and
- * people it is already shared with are left out of the results. A refusal
+ * people it is already shared with are left out of the results. Teams: the
+ * registry teams grouped by family (CRE ABT, CRE, SRE ABT, SRE), filtered by
+ * the same box; clicking one shares with it, and whoever is in the team sees
+ * the dashboard. "Shared with" lists teams first, then people. A refusal
  * shows in the dialog; the backend is the real check.
  */
 export default function ShareCustomDashboardDialog({
@@ -80,11 +131,16 @@ export default function ShareCustomDashboardDialog({
   currentUserEmail,
   onClose,
 }: ShareCustomDashboardDialogProps): JSX.Element {
+  const [mode, setMode] = useState<ShareMode>("people");
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const shares = useGetCustomDashboardShares(open ? dashboard.id : undefined);
   const share = usePutCustomDashboardShare();
   const unshare = useDeleteCustomDashboardShare();
+  const teamShares = useGetCustomDashboardTeamShares(open ? dashboard.id : undefined);
+  const shareTeam = usePutCustomDashboardTeamShare();
+  const unshareTeam = useDeleteCustomDashboardTeamShare();
+  const teams = useTeams(open && mode === "teams");
 
   const search = useDebouncedValue(input.trim(), 300);
   const results = useSearchUsers(
@@ -96,7 +152,7 @@ export default function ShareCustomDashboardDialog({
       },
       pagination: { limit: 8, offset: 0 },
     },
-    open,
+    open && mode === "people",
   );
 
   const sharedIds = useMemo(() => new Set((shares.data ?? []).map((s) => s.user.id)), [shares.data]);
@@ -114,7 +170,16 @@ export default function ShareCustomDashboardDialog({
     [results.data, me, sharedIds],
   );
 
-  const busy = share.isPending || unshare.isPending;
+  const sharedTeamKeys = useMemo(
+    () => new Set((teamShares.data ?? []).map((s) => s.team.key).filter((k) => k !== "")),
+    [teamShares.data],
+  );
+  const teamGroups = useMemo(
+    () => groupShareableTeams(teams.data ?? [], input.trim(), sharedTeamKeys),
+    [teams.data, input, sharedTeamKeys],
+  );
+
+  const busy = share.isPending || unshare.isPending || shareTeam.isPending || unshareTeam.isPending;
 
   const handleShare = async (userId: string): Promise<void> => {
     setError(null);
@@ -134,11 +199,33 @@ export default function ShareCustomDashboardDialog({
     }
   };
 
+  const handleShareTeam = async (teamKey: string): Promise<void> => {
+    setError(null);
+    try {
+      await shareTeam.mutateAsync({ dashboardId: dashboard.id, teamKey });
+    } catch (err) {
+      setError(shareErrorMessage(err, "The dashboard couldn't be shared with the team. Try again in a moment."));
+    }
+  };
+
+  const handleUnshareTeam = async (teamKey: string): Promise<void> => {
+    setError(null);
+    try {
+      await unshareTeam.mutateAsync({ dashboardId: dashboard.id, teamKey });
+    } catch (err) {
+      setError(shareErrorMessage(err, "The dashboard couldn't be unshared from the team. Try again in a moment."));
+    }
+  };
+
   const handleClose = (): void => {
+    setMode("people");
     setInput("");
     setError(null);
     onClose();
   };
+
+  const sharedPeople = shares.data ?? [];
+  const sharedTeams = teamShares.data ?? [];
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
@@ -146,9 +233,27 @@ export default function ShareCustomDashboardDialog({
       <DialogContent dividers>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
           <Typography variant="body2" color="text.secondary">
-            People you share with can view this dashboard in their Shared Dashboards and see your later changes.
-            They can&apos;t edit it.
+            People and teams you share with can view this dashboard in their Shared Dashboards and see your later
+            changes. They can&apos;t edit it. A team&apos;s members see it while they are in the team.
           </Typography>
+
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            color="primary"
+            value={mode}
+            aria-label="Share with"
+            onChange={(_, next: ShareMode | null) => {
+              // null when the selected button is pressed again: keep a mode chosen.
+              if (next) {
+                setMode(next);
+                setInput("");
+              }
+            }}
+          >
+            <ToggleButton value="people">People</ToggleButton>
+            <ToggleButton value="teams">Teams</ToggleButton>
+          </ToggleButtonGroup>
 
           {error && (
             <Alert severity="error" onClose={() => setError(null)}>
@@ -159,12 +264,12 @@ export default function ShareCustomDashboardDialog({
           <TextField
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Search people by name or email…"
+            placeholder={mode === "people" ? "Search people by name or email…" : "Filter teams by name…"}
             size="small"
             fullWidth
             autoFocus
             slotProps={{
-              htmlInput: { "aria-label": "Search people" },
+              htmlInput: { "aria-label": mode === "people" ? "Search people" : "Filter teams" },
               input: {
                 startAdornment: (
                   <InputAdornment position="start">
@@ -175,87 +280,135 @@ export default function ShareCustomDashboardDialog({
             }}
           />
 
-          <Box sx={{ minHeight: 120 }} aria-label="People to share with">
-            {results.isFetching ? (
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, pt: 0.5 }}>
-                {[0, 1, 2].map((i) => (
-                  <Skeleton key={i} variant="rounded" height={36} />
-                ))}
-              </Box>
-            ) : results.isError ? (
-              <Typography variant="body2" color="error" sx={{ py: 1 }}>
-                Could not search people. Try again.
-              </Typography>
-            ) : people.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
-                No matching people.
-              </Typography>
-            ) : (
-              <Box sx={{ display: "flex", flexDirection: "column" }}>
-                {people.map((u) => {
-                  const name = u.name.trim() || u.userName;
-                  return (
-                    <Button
-                      key={u.id}
-                      variant="text"
-                      color="inherit"
-                      disabled={busy}
-                      onClick={() => void handleShare(u.id)}
-                      aria-label={`Share with ${name}`}
-                      sx={{ justifyContent: "flex-start", textTransform: "none", px: 1, py: 0.75, gap: 1.25 }}
-                    >
-                      <Avatar sx={{ width: 28, height: 28, fontSize: "0.75rem" }}>{initialsOf(name)}</Avatar>
-                      <Box sx={{ minWidth: 0, textAlign: "left" }}>
-                        <Typography variant="body2" sx={{ lineHeight: 1.2 }} noWrap>
-                          {name}
+          {mode === "teams" ? (
+            <Box sx={{ minHeight: 120, maxHeight: 280, overflowY: "auto" }} aria-label="Teams to share with">
+              {teams.isLoading ? (
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, pt: 0.5 }}>
+                  {[0, 1, 2].map((i) => (
+                    <Skeleton key={i} variant="rounded" height={32} />
+                  ))}
+                </Box>
+              ) : teams.isError ? (
+                <Typography variant="body2" color="error" sx={{ py: 1 }}>
+                  Could not load the teams. Try again.
+                </Typography>
+              ) : teamGroups.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+                  No matching teams.
+                </Typography>
+              ) : (
+                teamGroups.map((group) => (
+                  <Box key={group.label} role="group" aria-label={group.label} sx={{ mb: 0.5 }}>
+                    <Typography variant="overline" color="text.secondary" sx={{ px: 1, display: "block", lineHeight: 2 }}>
+                      {group.label}
+                    </Typography>
+                    {group.teams.map((t) => (
+                      <Button
+                        key={t.id}
+                        variant="text"
+                        color="inherit"
+                        fullWidth
+                        disabled={busy}
+                        onClick={() => void handleShareTeam(t.id)}
+                        aria-label={`Share with team ${t.name}`}
+                        sx={{ justifyContent: "flex-start", textTransform: "none", px: 1, py: 0.5, gap: 1.25 }}
+                      >
+                        <Avatar sx={{ width: 28, height: 28 }}>
+                          <Users size={14} />
+                        </Avatar>
+                        <Typography variant="body2" noWrap>
+                          {t.name}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
-                          {u.email}
-                        </Typography>
-                      </Box>
-                    </Button>
-                  );
-                })}
-              </Box>
-            )}
-          </Box>
+                      </Button>
+                    ))}
+                  </Box>
+                ))
+              )}
+            </Box>
+          ) : (
+            <Box sx={{ minHeight: 120 }} aria-label="People to share with">
+              {results.isFetching ? (
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, pt: 0.5 }}>
+                  {[0, 1, 2].map((i) => (
+                    <Skeleton key={i} variant="rounded" height={36} />
+                  ))}
+                </Box>
+              ) : results.isError ? (
+                <Typography variant="body2" color="error" sx={{ py: 1 }}>
+                  Could not search people. Try again.
+                </Typography>
+              ) : people.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+                  No matching people.
+                </Typography>
+              ) : (
+                <Box sx={{ display: "flex", flexDirection: "column" }}>
+                  {people.map((u) => {
+                    const name = u.name.trim() || u.userName;
+                    return (
+                      <Button
+                        key={u.id}
+                        variant="text"
+                        color="inherit"
+                        disabled={busy}
+                        onClick={() => void handleShare(u.id)}
+                        aria-label={`Share with ${name}`}
+                        sx={{ justifyContent: "flex-start", textTransform: "none", px: 1, py: 0.75, gap: 1.25 }}
+                      >
+                        <Avatar sx={{ width: 28, height: 28, fontSize: "0.75rem" }}>{initialsOf(name)}</Avatar>
+                        <Box sx={{ minWidth: 0, textAlign: "left" }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }} noWrap>
+                            {name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                            {u.email}
+                          </Typography>
+                        </Box>
+                      </Button>
+                    );
+                  })}
+                </Box>
+              )}
+            </Box>
+          )}
 
           <Typography variant="subtitle2">Shared with</Typography>
           <Box aria-label="Shared with">
-            {shares.isLoading ? (
+            {shares.isLoading || teamShares.isLoading ? (
               <Skeleton variant="rounded" height={36} />
-            ) : shares.isError || shares.data === null ? (
+            ) : shares.isError || shares.data === null || teamShares.isError || teamShares.data === null ? (
               <Typography variant="body2" color="error">
                 Could not load who this dashboard is shared with.
               </Typography>
-            ) : (shares.data ?? []).length === 0 ? (
+            ) : sharedPeople.length === 0 && sharedTeams.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
                 Not shared with anyone yet.
               </Typography>
             ) : (
-              (shares.data ?? []).map((s) => {
-                const name = s.user.name || s.user.email;
-                return (
-                  <Box key={s.user.id ?? s.user.email} sx={{ display: "flex", alignItems: "center", gap: 1.25, px: 1, py: 0.5 }}>
-                    <Avatar sx={{ width: 28, height: 28, fontSize: "0.75rem" }}>{initialsOf(name)}</Avatar>
+              <>
+                {sharedTeams.map((s) => (
+                  <Box key={s.team.key || s.team.name} sx={{ display: "flex", alignItems: "center", gap: 1.25, px: 1, py: 0.5 }}>
+                    <Avatar sx={{ width: 28, height: 28 }}>
+                      <Users size={14} />
+                    </Avatar>
                     <Box sx={{ minWidth: 0, flex: 1 }}>
                       <Typography variant="body2" sx={{ lineHeight: 1.2 }} noWrap>
-                        {name}
+                        {s.team.name}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
-                        {s.user.email}
+                        Team · {familyLabel(s.team.family)}
                       </Typography>
                     </Box>
-                    {s.user.id && (
+                    {s.team.key && (
                       <Tooltip title="Stop sharing">
                         <span>
                           <IconButton
                             size="small"
                             disabled={busy}
-                            aria-label={`Stop sharing with ${name}`}
-                            onClick={() => void handleUnshare(s.user.id as string)}
+                            aria-label={`Stop sharing with team ${s.team.name}`}
+                            onClick={() => void handleUnshareTeam(s.team.key)}
                           >
-                            {unshare.isPending && unshare.variables?.userId === s.user.id ? (
+                            {unshareTeam.isPending && unshareTeam.variables?.teamKey === s.team.key ? (
                               <CircularProgress size={14} color="inherit" />
                             ) : (
                               <X size={16} />
@@ -265,8 +418,42 @@ export default function ShareCustomDashboardDialog({
                       </Tooltip>
                     )}
                   </Box>
-                );
-              })
+                ))}
+                {sharedPeople.map((s) => {
+                  const name = s.user.name || s.user.email;
+                  return (
+                    <Box key={s.user.id ?? s.user.email} sx={{ display: "flex", alignItems: "center", gap: 1.25, px: 1, py: 0.5 }}>
+                      <Avatar sx={{ width: 28, height: 28, fontSize: "0.75rem" }}>{initialsOf(name)}</Avatar>
+                      <Box sx={{ minWidth: 0, flex: 1 }}>
+                        <Typography variant="body2" sx={{ lineHeight: 1.2 }} noWrap>
+                          {name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                          {s.user.email}
+                        </Typography>
+                      </Box>
+                      {s.user.id && (
+                        <Tooltip title="Stop sharing">
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={busy}
+                              aria-label={`Stop sharing with ${name}`}
+                              onClick={() => void handleUnshare(s.user.id as string)}
+                            >
+                              {unshare.isPending && unshare.variables?.userId === s.user.id ? (
+                                <CircularProgress size={14} color="inherit" />
+                              ) : (
+                                <X size={16} />
+                              )}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </Box>
+                  );
+                })}
+              </>
             )}
           </Box>
         </Box>

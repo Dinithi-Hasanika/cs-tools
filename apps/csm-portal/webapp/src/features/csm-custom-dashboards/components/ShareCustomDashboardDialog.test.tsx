@@ -40,6 +40,17 @@ let searchResults: { data?: { users: User[] }; isFetching?: boolean; isError?: b
 let sharesState: { data?: unknown; isLoading?: boolean; isError?: boolean };
 const shareMock = vi.fn();
 const unshareMock = vi.fn();
+interface Team {
+  id: string;
+  name: string;
+  family?: string;
+  creGroupId?: string;
+  sreGroupId?: string;
+}
+let teamsState: { data?: Team[]; isLoading?: boolean; isError?: boolean };
+let teamSharesState: { data?: unknown; isLoading?: boolean; isError?: boolean };
+const shareTeamMock = vi.fn();
+const unshareTeamMock = vi.fn();
 
 vi.mock("@features/csm-users/api/useSearchUsers", () => ({
   useSearchUsers: () => searchResults,
@@ -50,6 +61,15 @@ vi.mock("@features/csm-custom-dashboards/api/useDashboardShares", () => ({
   useDeleteCustomDashboardShare: () => ({ mutateAsync: unshareMock, isPending: false, variables: undefined }),
 }));
 
+vi.mock("@features/csm-custom-dashboards/api/useDashboardTeamShares", () => ({
+  useGetCustomDashboardTeamShares: () => teamSharesState,
+  usePutCustomDashboardTeamShare: () => ({ mutateAsync: shareTeamMock, isPending: false }),
+  useDeleteCustomDashboardTeamShare: () => ({ mutateAsync: unshareTeamMock, isPending: false, variables: undefined }),
+}));
+vi.mock("@features/csm-dashboard/api/useTeams", () => ({
+  useTeams: () => teamsState,
+}));
+
 import { BackendApiError } from "@api/backend/client";
 import ShareCustomDashboardDialog from "@features/csm-custom-dashboards/components/ShareCustomDashboardDialog";
 
@@ -58,6 +78,34 @@ const JANE: User = { id: "jane", userName: "jane", name: "Jane Doe", email: "jan
 const ALICE: User = { id: "alice", userName: "alice", name: "Alice Perera", email: "alice.perera@example.com", userType: "internal" };
 const BEN: User = { id: "ben", userName: "ben", name: "Ben Bee", email: "ben@example.com", userType: "internal" };
 const CUSTOMER: User = { id: "cust", userName: "cust", name: "John Smith", email: "john@example.com", userType: "customer" };
+
+// The registry teams as POST /teams/search lists them: Orion has no group, so
+// it can't be shared with; Asgardeo is not a registry team (no family).
+const TEAMS: Team[] = [
+  { id: "rigel", name: "Rigel", family: "cre-abt", creGroupId: "g-rigel" },
+  { id: "apollo", name: "Apollo", family: "sre-abt", sreGroupId: "g-apollo" },
+  { id: "americas", name: "Americas", family: "cre", creGroupId: "g-americas" },
+  { id: "castor", name: "Castor", family: "cre-abt", creGroupId: "g-castor" },
+  { id: "orion", name: "Orion", family: "cre-abt" },
+  { id: "3a019d7a-293f-40a6-9d9d-96b80eb0e179", name: "Asgardeo" },
+];
+
+function showTeams(): void {
+  fireEvent.click(screen.getByRole("button", { name: "Teams" }));
+}
+
+/** The Teams list as "family: team, team" lines. */
+function teamGroups(): string[] {
+  return within(screen.getByLabelText("Teams to share with"))
+    .queryAllByRole("group")
+    .map(
+      (g) =>
+        `${g.getAttribute("aria-label")}: ${within(g)
+          .queryAllByRole("button")
+          .map((b) => (b.getAttribute("aria-label") ?? "").replace("Share with team ", ""))
+          .join(", ")}`,
+    );
+}
 
 function renderDialog(onClose = vi.fn()) {
   render(<ShareCustomDashboardDialog open dashboard={DASHBOARD} currentUserEmail="Jane.Doe@example.com" onClose={onClose} />);
@@ -76,6 +124,10 @@ describe("ShareCustomDashboardDialog", () => {
     sharesState = { data: [] };
     shareMock.mockReset();
     unshareMock.mockReset();
+    teamsState = { data: TEAMS };
+    teamSharesState = { data: [] };
+    shareTeamMock.mockReset();
+    unshareTeamMock.mockReset();
   });
 
   it("names the dashboard and says nobody has it yet", () => {
@@ -141,5 +193,80 @@ describe("ShareCustomDashboardDialog", () => {
     const onClose = renderDialog();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  describe("teams", () => {
+    it("offers registry teams with a group, by family, each on its own", () => {
+      renderDialog();
+      showTeams();
+      expect(screen.getByLabelText("Filter teams")).toBeInTheDocument();
+      expect(teamGroups()).toEqual(["CRE ABT: Castor, Rigel", "CRE: Americas", "SRE ABT: Apollo"]);
+      expect(screen.queryByLabelText("People to share with")).not.toBeInTheDocument();
+    });
+
+    it("filters by name and leaves out teams it is already shared with", () => {
+      teamSharesState = { data: [{ team: { key: "castor", name: "Castor", family: "cre-abt" }, sharedOn: "a" }] };
+      renderDialog();
+      showTeams();
+      expect(teamGroups()).toEqual(["CRE ABT: Rigel", "CRE: Americas", "SRE ABT: Apollo"]);
+      fireEvent.change(screen.getByLabelText("Filter teams"), { target: { value: "AMER" } });
+      expect(teamGroups()).toEqual(["CRE: Americas"]);
+      fireEvent.change(screen.getByLabelText("Filter teams"), { target: { value: "zzz" } });
+      expect(screen.getByText("No matching teams.")).toBeInTheDocument();
+    });
+
+    it("shares with the team clicked, by its key", async () => {
+      shareTeamMock.mockResolvedValue([]);
+      renderDialog();
+      showTeams();
+      fireEvent.click(screen.getByRole("button", { name: "Share with team Rigel" }));
+      await waitFor(() => expect(shareTeamMock).toHaveBeenCalledWith({ dashboardId: DASHBOARD.id, teamKey: "rigel" }));
+      expect(shareMock).not.toHaveBeenCalled();
+    });
+
+    it("shows the backend's refusal", async () => {
+      shareTeamMock.mockRejectedValue(new BackendApiError(404, "That team can't be found, so the dashboard can't be shared with it."));
+      renderDialog();
+      showTeams();
+      fireEvent.click(screen.getByRole("button", { name: "Share with team Apollo" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("That team can't be found, so the dashboard can't be shared with it.");
+    });
+
+    it("says so when the teams can't be loaded", () => {
+      teamsState = { isError: true };
+      renderDialog();
+      showTeams();
+      expect(screen.getByText("Could not load the teams. Try again.")).toBeInTheDocument();
+    });
+
+    it("lists teams before people under Shared with, and stops sharing with a team", async () => {
+      unshareTeamMock.mockResolvedValue(null);
+      teamSharesState = { data: [{ team: { key: "rigel", name: "Rigel", family: "cre-abt" }, sharedOn: "a" }] };
+      sharesState = { data: [{ user: { id: "alice", email: "alice.perera@example.com", name: "Alice Perera" }, sharedOn: "a" }] };
+      renderDialog();
+      const shared = screen.getByLabelText("Shared with");
+      expect(within(shared).getByText("Team · CRE ABT")).toBeInTheDocument();
+      const names = within(shared)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label"));
+      expect(names).toEqual(["Stop sharing with team Rigel", "Stop sharing with Alice Perera"]);
+
+      fireEvent.click(screen.getByRole("button", { name: "Stop sharing with team Rigel" }));
+      await waitFor(() => expect(unshareTeamMock).toHaveBeenCalledWith({ dashboardId: DASHBOARD.id, teamKey: "rigel" }));
+    });
+
+    it("lists a team no longer in the registry without a remove button", () => {
+      teamSharesState = { data: [{ team: { key: "", name: "Old Team", family: "cre" }, sharedOn: "a" }] };
+      renderDialog();
+      const shared = screen.getByLabelText("Shared with");
+      expect(within(shared).getByText("Old Team")).toBeInTheDocument();
+      expect(within(shared).queryByRole("button")).not.toBeInTheDocument();
+    });
+
+    it("says nothing is shared only when neither people nor teams have it", () => {
+      teamSharesState = { data: [{ team: { key: "rigel", name: "Rigel", family: "cre-abt" }, sharedOn: "a" }] };
+      renderDialog();
+      expect(screen.queryByText("Not shared with anyone yet.")).not.toBeInTheDocument();
+    });
   });
 });

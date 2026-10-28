@@ -42,11 +42,23 @@ interface DashboardShareList {
   shares: DashboardShare[];
 }
 
+/**
+ * The caller's team a dashboard was shared with (entity-service's team id,
+ * name and type, e.g. `cre-abt`).
+ */
+export interface SharedViaTeam {
+  id: string;
+  name: string;
+  type: string;
+}
+
 /** One dashboard another user shared with the caller (`GET /dashboards/shared`): no widgets. */
 export interface SharedDashboardSummary {
   id: string;
   name: string;
   owner: DashboardPerson;
+  /** The caller's team it was shared with; `null` when shared with the caller directly. */
+  sharedViaTeam: SharedViaTeam | null;
   sharedOn: string;
   /** When the owner last changed it. */
   updatedOn: string;
@@ -64,6 +76,8 @@ interface SharedDashboardList {
 export interface SharedDashboard {
   dashboard: BeDashboard;
   owner: DashboardPerson;
+  /** The caller's team it was shared with; `null` when shared with the caller directly. */
+  sharedViaTeam: SharedViaTeam | null;
   sharedOn: string;
   updatedOn: string;
 }

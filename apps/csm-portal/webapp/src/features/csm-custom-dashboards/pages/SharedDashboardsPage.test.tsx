@@ -23,6 +23,7 @@ interface Summary {
   id: string;
   name: string;
   owner: { id: string | null; email: string; name: string };
+  sharedViaTeam: { id: string; name: string; type: string } | null;
   sharedOn: string;
   updatedOn: string;
 }
@@ -46,8 +47,9 @@ import SharedDashboardsPage from "@features/csm-custom-dashboards/pages/SharedDa
 
 const jane = { id: "jane", email: "jane.doe@example.com", name: "Jane Doe" };
 const ben = { id: "ben", email: "ben@example.com", name: "Ben Bee" };
-const A: Summary = { id: "5e636a12-0000-4000-8000-00000000000a", name: "Alpha", owner: jane, sharedOn: "x", updatedOn: "y" };
-const B: Summary = { id: "5e636a12-0000-4000-8000-00000000000b", name: "Beta", owner: ben, sharedOn: "x", updatedOn: "y" };
+const A: Summary = { id: "5e636a12-0000-4000-8000-00000000000a", name: "Alpha", owner: jane, sharedViaTeam: null, sharedOn: "x", updatedOn: "y" };
+const B: Summary = { id: "5e636a12-0000-4000-8000-00000000000b", name: "Beta", owner: ben, sharedViaTeam: null, sharedOn: "x", updatedOn: "y" };
+const rigel = { id: "391737f4-0588-2f9f-9bdd-b18d39f83d9a", name: "Rigel", type: "cre-abt" };
 
 function sharedWith(widgetId: string) {
   return {
@@ -118,6 +120,25 @@ describe("SharedDashboardsPage", () => {
       .filter((o) => !o.contains(box) && o.getAttribute("aria-disabled") !== "true")
       .map((o) => o.textContent);
     expect(visible).toEqual(["BetaShared by Ben Bee"]);
+  });
+
+  it("names the team a dashboard reached the user through", () => {
+    listState = { data: [{ ...A, sharedViaTeam: rigel }, B] };
+    renderAt(`/dashboard/shared/${A.id}`);
+    expect(screen.getByText(/Alpha · Shared with your team Rigel by Jane Doe/)).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Select dashboard" }));
+    expect(screen.getAllByText("Shared with your team Rigel by Jane Doe").length).toBeGreaterThan(0);
+    expect(screen.getByText("Shared by Ben Bee")).toBeInTheDocument();
+
+    // The team is searched too.
+    fireEvent.change(screen.getByRole("textbox", { name: "Search dashboards" }), { target: { value: "rigel" } });
+    const box = screen.getByRole("textbox", { name: "Search dashboards" });
+    const visible = screen
+      .getAllByRole("option")
+      .filter((o) => !o.contains(box) && o.getAttribute("aria-disabled") !== "true")
+      .map((o) => o.textContent);
+    expect(visible).toEqual(["AlphaShared with your team Rigel by Jane Doe"]);
   });
 
   it("opens a dashboard picked in the switcher", () => {

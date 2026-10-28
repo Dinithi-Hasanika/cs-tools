@@ -5022,6 +5022,176 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+  /dashboards/custom/{id}/team-shares:
+    get:
+      summary: List the teams one of the caller's saved dashboards is shared with.
+      description: >
+        The teams the caller shared this dashboard with (view only), ordered
+        by name, each by registry key, name and family. A team no longer in
+        the registry is listed with an empty key. Owner only: 404 when the
+        caller has no dashboard with this id, including another user's. CS
+        engineers and admins only.
+      operationId: listCustomDashboardTeamShares
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDashboardTeamShareList'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+  /dashboards/custom/{id}/team-shares/{teamKey}:
+    put:
+      summary: Share one of the caller's saved dashboards with a team.
+      description: >
+        No request body. Whoever is in the team when the dashboard is read
+        (internal staff, not its owner) can view it in Shared Dashboards: the
+        membership is live, so someone who joins later sees it and someone who
+        leaves stops seeing it. Only teams in the team registry with a group id
+        can be chosen; any other key is a 404 without an upstream call. Owner
+        only: 404 when the dashboard is not the caller's. Sharing again is a
+        200. The response is the dashboard's team shares after the change. CS
+        engineers and admins only.
+      operationId: addCustomDashboardTeamShare
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: teamKey
+          in: path
+          required: true
+          description: The team's registry key (CSM_TEAM_REGISTRY), e.g. rigel, castor, americas, apollo.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomDashboardTeamShareList'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    delete:
+      summary: Stop sharing one of the caller's saved dashboards with a team.
+      description: >
+        Owner only. 404 when the dashboard is not the caller's, is not shared
+        with that team, or the key is not a registry team. CS engineers and
+        admins only.
+      operationId: removeCustomDashboardTeamShare
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: teamKey
+          in: path
+          required: true
+          description: The team's registry key (CSM_TEAM_REGISTRY), e.g. rigel, castor, americas, apollo.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: NoContent
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
   /dashboards/shared:
     get:
       summary: List the dashboards other users shared with the caller.
@@ -16231,12 +16401,64 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CustomDashboardShare'
+    CustomDashboardTeamShareTeam:
+      type: object
+      required:
+        - key
+        - name
+      properties:
+        key:
+          type: string
+          description: The team's registry key; empty when the team is no longer in the registry.
+        name:
+          type: string
+        family:
+          type: string
+          description: The team's family, e.g. cre-abt, cre, sre-abt.
+    CustomDashboardTeamShare:
+      type: object
+      required:
+        - team
+        - sharedOn
+      properties:
+        team:
+          $ref: '#/components/schemas/CustomDashboardTeamShareTeam'
+        sharedOn:
+          type: string
+          format: date-time
+    CustomDashboardTeamShareList:
+      type: object
+      required:
+        - shares
+      properties:
+        shares:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomDashboardTeamShare'
+    SharedViaTeam:
+      type: object
+      nullable: true
+      description: The caller's team the dashboard was shared with; null when it was shared with the caller directly (a direct share wins; with several teams, the first by name).
+      required:
+        - id
+        - name
+        - type
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          description: The team's type, e.g. cre-abt, sre-abt.
     SharedDashboardSummary:
       type: object
       required:
         - id
         - name
         - owner
+        - sharedViaTeam
         - sharedOn
         - updatedOn
       properties:
@@ -16247,6 +16469,8 @@ components:
           type: string
         owner:
           $ref: '#/components/schemas/CustomDashboardPerson'
+        sharedViaTeam:
+          $ref: '#/components/schemas/SharedViaTeam'
         sharedOn:
           type: string
           format: date-time
@@ -16268,6 +16492,7 @@ components:
       required:
         - dashboard
         - owner
+        - sharedViaTeam
         - sharedOn
         - updatedOn
       properties:
@@ -16275,6 +16500,8 @@ components:
           $ref: '#/components/schemas/Dashboard'
         owner:
           $ref: '#/components/schemas/CustomDashboardPerson'
+        sharedViaTeam:
+          $ref: '#/components/schemas/SharedViaTeam'
         sharedOn:
           type: string
           format: date-time

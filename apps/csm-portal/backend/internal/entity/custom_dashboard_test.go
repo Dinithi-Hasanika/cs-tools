@@ -293,3 +293,68 @@ func TestCustomDashboardShareClient_PassesStatusErrorsThrough(t *testing.T) {
 		})
 	}
 }
+
+const testShareTeamID = "391737f4-0588-2f9f-9bdd-b18d39f83d9a"
+
+func TestListCustomDashboardTeamShares(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusOK,
+		`{"shares":[{"team":{"id":"`+testShareTeamID+`","name":"Rigel","type":"cre-abt"},"sharedOn":"2026-10-27T11:23:23Z"}]}`)
+	shares, err := client.ListCustomDashboardTeamShares(userContext(), testCustomDashboardID)
+	if err != nil {
+		t.Fatalf("ListCustomDashboardTeamShares: %v", err)
+	}
+	if got.method != http.MethodGet || got.path != "/users/me/dashboards/"+testCustomDashboardID+"/team-shares" || got.userToken != "user-token" {
+		t.Errorf("request = %s %s (token %q)", got.method, got.path, got.userToken)
+	}
+	if len(shares) != 1 || shares[0].Team.ID != testShareTeamID || shares[0].Team.Name != "Rigel" || shares[0].Team.Type != "cre-abt" {
+		t.Fatalf("shares = %+v", shares)
+	}
+}
+
+func TestAddCustomDashboardTeamShare(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusOK, `{"shares":null}`)
+	shares, err := client.AddCustomDashboardTeamShare(userContext(), testCustomDashboardID, testShareTeamID)
+	if err != nil {
+		t.Fatalf("AddCustomDashboardTeamShare: %v", err)
+	}
+	if got.method != http.MethodPut || got.path != "/users/me/dashboards/"+testCustomDashboardID+"/team-shares/"+testShareTeamID || got.body != "" {
+		t.Errorf("request = %s %s body %q, want PUT with no body", got.method, got.path, got.body)
+	}
+	if shares == nil || len(shares) != 0 {
+		t.Errorf("shares = %#v, want an empty, non-nil slice", shares)
+	}
+}
+
+func TestRemoveCustomDashboardTeamShare(t *testing.T) {
+	client, got := newCustomDashboardTestClient(t, http.StatusNoContent, "")
+	if err := client.RemoveCustomDashboardTeamShare(userContext(), testCustomDashboardID, testShareTeamID); err != nil {
+		t.Fatalf("RemoveCustomDashboardTeamShare: %v", err)
+	}
+	if got.method != http.MethodDelete || got.path != "/users/me/dashboards/"+testCustomDashboardID+"/team-shares/"+testShareTeamID {
+		t.Errorf("request = %s %s", got.method, got.path)
+	}
+}
+
+func TestCustomDashboardTeamShareClient_PassesStatusErrorsThrough(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusBadRequest} {
+		client, _ := newCustomDashboardTestClient(t, status, `{"code":0,"message":"from entity-service"}`)
+		_, err := client.AddCustomDashboardTeamShare(userContext(), testCustomDashboardID, testShareTeamID)
+		var apiErr *apierror.Error
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != status {
+			t.Fatalf("err = %v, want *apierror.Error with status %d", err, status)
+		}
+	}
+}
+
+func TestSharedCustomDashboards_DecodeTheTeam(t *testing.T) {
+	client, _ := newCustomDashboardTestClient(t, http.StatusOK,
+		`{"dashboards":[{"id":"`+testCustomDashboardID+`","name":"Live Save Test","owner":{"id":null,"email":"jane@example.com","name":"Jane Doe"},"sharedViaTeam":{"id":"`+testShareTeamID+`","name":"Rigel","type":"cre-abt"},"sharedOn":"a","updatedOn":"b"},`+
+			`{"id":"`+testCustomDashboardID+`","name":"Direct","owner":{"id":null,"email":"jane@example.com","name":"Jane Doe"},"sharedViaTeam":null,"sharedOn":"a","updatedOn":"b"}]}`)
+	list, err := client.ListSharedCustomDashboards(userContext())
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if list[0].SharedViaTeam == nil || list[0].SharedViaTeam.Name != "Rigel" || list[1].SharedViaTeam != nil {
+		t.Fatalf("sharedViaTeam = %+v, %+v; want Rigel, then nil", list[0].SharedViaTeam, list[1].SharedViaTeam)
+	}
+}

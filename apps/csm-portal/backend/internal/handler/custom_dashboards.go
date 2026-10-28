@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
@@ -54,6 +55,10 @@ const (
 	errMsgCustomDashboardShareFailed   = "The dashboard couldn't be shared. Try again in a moment."
 	errMsgCustomDashboardUnshareFailed = "The dashboard couldn't be unshared. Try again in a moment."
 	errMsgSharedDashboardListFailed    = "The dashboards shared with you couldn't be loaded. Try again in a moment."
+	errMsgTeamSharesFailed             = "The teams this dashboard is shared with couldn't be loaded. Try again in a moment."
+	errMsgTeamShareUnknownTeam         = "That team can't be found, so the dashboard can't be shared with it."
+	errMsgTeamShareFailed              = "The dashboard couldn't be shared with the team. Try again in a moment."
+	errMsgTeamUnshareFailed            = "The dashboard couldn't be unshared from the team. Try again in a moment."
 	errMsgSharedDashboardOutdated      = "This shared dashboard can't be shown any more because dashboards have changed since it was saved. Ask its owner to update it."
 	errMsgCustomDashboardOutdated      = "This saved dashboard can't be shown any more because dashboards have changed since it was saved. Generate it again."
 )
@@ -69,6 +74,9 @@ type entityCustomDashboardClient interface {
 	RemoveCustomDashboardShare(ctx context.Context, id, userID string) error
 	ListSharedCustomDashboards(ctx context.Context) ([]entity.SharedCustomDashboardSummary, error)
 	GetSharedCustomDashboard(ctx context.Context, id string) (entity.SharedCustomDashboard, error)
+	ListCustomDashboardTeamShares(ctx context.Context, id string) ([]entity.CustomDashboardTeamShare, error)
+	AddCustomDashboardTeamShare(ctx context.Context, id, teamID string) ([]entity.CustomDashboardTeamShare, error)
+	RemoveCustomDashboardTeamShare(ctx context.Context, id, teamID string) error
 	SaveCustomDashboard(ctx context.Context, id, name, definition string) (entity.CustomDashboard, error)
 }
 
@@ -144,10 +152,37 @@ type sharedDashboardListResponse struct {
 // dashboard in the GET /dashboards/{dashboardId} shape, who shared it, when,
 // and when its owner last changed it.
 type sharedDashboardResponse struct {
-	Dashboard dashboardDetailView          `json:"dashboard"`
-	Owner     entity.CustomDashboardPerson `json:"owner"`
-	SharedOn  string                       `json:"sharedOn"`
-	UpdatedOn string                       `json:"updatedOn"`
+	Dashboard     dashboardDetailView          `json:"dashboard"`
+	Owner         entity.CustomDashboardPerson `json:"owner"`
+	SharedViaTeam *entity.CustomDashboardTeam  `json:"sharedViaTeam"`
+	SharedOn      string                       `json:"sharedOn"`
+	UpdatedOn     string                       `json:"updatedOn"`
+}
+
+// customDashboardTeamShareTeam is a team a dashboard is shared with, as the
+// webapp sees it: its registry key (what the team-share routes take), name and
+// family. Key is empty for a team that is no longer in the registry.
+type customDashboardTeamShareTeam struct {
+	Key    string `json:"key"`
+	Name   string `json:"name"`
+	Family string `json:"family,omitempty"`
+}
+
+type customDashboardTeamShare struct {
+	Team     customDashboardTeamShareTeam `json:"team"`
+	SharedOn string                       `json:"sharedOn"`
+}
+
+// customDashboardTeamShareListResponse is the body of GET and PUT
+// /dashboards/custom/{id}/team-shares[/{teamKey}].
+type customDashboardTeamShareListResponse struct {
+	Shares []customDashboardTeamShare `json:"shares"`
+}
+
+// shareableTeam is a registry team a dashboard can be shared with: its id in
+// entity-service's team table (the team's group id: CRE first, else SRE).
+type shareableTeam struct {
+	key, name, family, id string
 }
 
 // CustomDashboardHandler serves the caller's own saved dashboards (My
@@ -158,6 +193,31 @@ type sharedDashboardResponse struct {
 // is stored.
 type CustomDashboardHandler struct {
 	entity entityCustomDashboardClient
+	// teamsByKey / teamsByID are the registry teams a dashboard can be
+	// shared with (WithTeams); empty means no team can be chosen.
+	teamsByKey map[string]shareableTeam
+	teamsByID  map[string]shareableTeam
+}
+
+// WithTeams sets the teams a dashboard can be shared with: the team registry
+// (directory.TeamResults). A team with no group id configured has no team
+// table id to share with and is left out.
+func (h *CustomDashboardHandler) WithTeams(teams []directory.TeamResult) *CustomDashboardHandler {
+	h.teamsByKey = make(map[string]shareableTeam, len(teams))
+	h.teamsByID = make(map[string]shareableTeam, len(teams))
+	for _, t := range teams {
+		id := t.CreGroupID
+		if id == "" {
+			id = t.SreGroupID
+		}
+		if id == "" {
+			continue
+		}
+		team := shareableTeam{key: t.ID, name: t.Name, family: t.Family, id: strings.ToLower(id)}
+		h.teamsByKey[t.ID] = team
+		h.teamsByID[team.id] = team
+	}
+	return h
 }
 
 // NewCustomDashboardHandler returns the handler using client.
@@ -376,11 +436,108 @@ func (h *CustomDashboardHandler) GetSharedDashboard(w http.ResponseWriter, r *ht
 		return
 	}
 	writeJSONValue(w, http.StatusOK, sharedDashboardResponse{
-		Dashboard: storedDashboardView(d, shared.ID),
-		Owner:     shared.Owner,
-		SharedOn:  shared.SharedOn,
-		UpdatedOn: shared.UpdatedOn,
+		Dashboard:     storedDashboardView(d, shared.ID),
+		Owner:         shared.Owner,
+		SharedViaTeam: shared.SharedViaTeam,
+		SharedOn:      shared.SharedOn,
+		UpdatedOn:     shared.UpdatedOn,
 	})
+}
+
+// teamShareListResponse is entity-service's team shares as the webapp sees
+// them: each team by registry key and family, in entity-service's order.
+func (h *CustomDashboardHandler) teamShareListResponse(shares []entity.CustomDashboardTeamShare) customDashboardTeamShareListResponse {
+	out := make([]customDashboardTeamShare, 0, len(shares))
+	for _, sh := range shares {
+		team := customDashboardTeamShareTeam{Name: sh.Team.Name, Family: sh.Team.Type}
+		if known, ok := h.teamsByID[strings.ToLower(sh.Team.ID)]; ok {
+			team.Key, team.Family = known.key, known.family
+		}
+		out = append(out, customDashboardTeamShare{Team: team, SharedOn: sh.SharedOn})
+	}
+	return customDashboardTeamShareListResponse{Shares: out}
+}
+
+// customDashboardIDAndTeam reads {id} and {teamKey}: a 400 for a non-UUID id,
+// a 404 for a key that is not a shareable registry team.
+func (h *CustomDashboardHandler) customDashboardIDAndTeam(w http.ResponseWriter, r *http.Request) (string, shareableTeam, bool) {
+	id := r.PathValue("id")
+	if !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return "", shareableTeam{}, false
+	}
+	team, ok := h.teamsByKey[strings.ToLower(r.PathValue("teamKey"))]
+	if !ok {
+		writeError(w, http.StatusNotFound, errMsgTeamShareUnknownTeam)
+		return "", shareableTeam{}, false
+	}
+	return strings.ToLower(id), team, true
+}
+
+// ListCustomDashboardTeamShares handles GET /dashboards/custom/{id}/team-shares:
+// the teams the caller's dashboard is shared with. Owner only: another user's
+// dashboard is a 404, the same as a missing one.
+func (h *CustomDashboardHandler) ListCustomDashboardTeamShares(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	id := r.PathValue("id")
+	if !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+	shares, err := h.entity.ListCustomDashboardTeamShares(r.Context(), strings.ToLower(id))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity ListCustomDashboardTeamShares failed", "dashboardId", id, "err", err)
+		mapUpstreamErrorGeneric(w, err, errMsgTeamSharesFailed)
+		return
+	}
+	writeJSONValue(w, http.StatusOK, h.teamShareListResponse(shares))
+}
+
+// AddCustomDashboardTeamShare handles PUT /dashboards/custom/{id}/team-shares/{teamKey}
+// (no body): shares the caller's dashboard with a registry team, view only,
+// and answers the dashboard's team shares after the change; sharing again is a
+// 200 too. Whoever is in the team (internal staff) sees it under Shared
+// Dashboards, decided by entity-service when it is read. A key that is not a
+// registry team with a group id is a 404 without an upstream call.
+func (h *CustomDashboardHandler) AddCustomDashboardTeamShare(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	id, team, ok := h.customDashboardIDAndTeam(w, r)
+	if !ok {
+		return
+	}
+	shares, err := h.entity.AddCustomDashboardTeamShare(r.Context(), id, team.id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity AddCustomDashboardTeamShare failed", "dashboardId", id, "teamKey", team.key, "err", err)
+		mapUpstreamError(w, err, errMsgTeamShareFailed)
+		return
+	}
+	writeJSONValue(w, http.StatusOK, h.teamShareListResponse(shares))
+}
+
+// RemoveCustomDashboardTeamShare handles DELETE /dashboards/custom/{id}/team-shares/{teamKey}
+// (204): stops sharing the caller's dashboard with that team. Not shared with
+// it, or not the caller's dashboard, is a 404.
+func (h *CustomDashboardHandler) RemoveCustomDashboardTeamShare(w http.ResponseWriter, r *http.Request) {
+	if middleware.UserInfoFromContext(r.Context()) == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	id, team, ok := h.customDashboardIDAndTeam(w, r)
+	if !ok {
+		return
+	}
+	if err := h.entity.RemoveCustomDashboardTeamShare(r.Context(), id, team.id); err != nil {
+		slog.ErrorContext(r.Context(), "entity RemoveCustomDashboardTeamShare failed", "dashboardId", id, "teamKey", team.key, "err", err)
+		mapUpstreamErrorGeneric(w, err, errMsgTeamUnshareFailed)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // SaveCustomDashboard handles PUT /dashboards/custom/{id}: creates the

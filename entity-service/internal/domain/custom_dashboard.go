@@ -77,15 +77,41 @@ type CustomDashboardShareList struct {
 	Shares []CustomDashboardShare `json:"shares"`
 }
 
+// CustomDashboardTeamShareTeam is the team a dashboard is shared with: the
+// `team` row's id, name and type (e.g. "cre-abt", "sre-abt").
+type CustomDashboardTeamShareTeam struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// CustomDashboardTeamShare is one team a saved dashboard is shared with
+// (migration 0251), as its owner sees it: GET
+// /users/me/dashboards/{id}/team-shares. Whoever is in the team when the
+// dashboard is listed may view it.
+type CustomDashboardTeamShare struct {
+	Team     CustomDashboardTeamShareTeam `json:"team"`
+	SharedOn time.Time                    `json:"sharedOn"`
+}
+
+// CustomDashboardTeamShareList is the body of GET /users/me/dashboards/{id}/team-shares.
+type CustomDashboardTeamShareList struct {
+	Shares []CustomDashboardTeamShare `json:"shares"`
+}
+
 // SharedCustomDashboardSummary is one dashboard another user shared with the
 // caller, as listed in GET /users/me/shared-dashboards: no definition. Owner
-// is who shared it (the dashboard's owner).
+// is who shared it (the dashboard's owner). SharedViaTeam is the caller's team
+// it was shared with, nil when it was shared with the caller directly (a
+// direct share wins when there are both; with several teams, the first by
+// name). SharedOn is that share's date.
 type SharedCustomDashboardSummary struct {
-	ID        string        `json:"id"`
-	Name      string        `json:"name"`
-	Owner     UserReference `json:"owner"`
-	SharedOn  time.Time     `json:"sharedOn"`
-	UpdatedOn time.Time     `json:"updatedOn"`
+	ID            string                        `json:"id"`
+	Name          string                        `json:"name"`
+	Owner         UserReference                 `json:"owner"`
+	SharedViaTeam *CustomDashboardTeamShareTeam `json:"sharedViaTeam"`
+	SharedOn      time.Time                     `json:"sharedOn"`
+	UpdatedOn     time.Time                     `json:"updatedOn"`
 }
 
 // SharedCustomDashboardList is the body of GET /users/me/shared-dashboards.
@@ -96,11 +122,13 @@ type SharedCustomDashboardList struct {
 // SharedCustomDashboard is one dashboard shared with the caller, with its
 // definition (GET /users/me/shared-dashboards/{id}): the owner's current
 // version, read only. Definition is opaque text, as in CustomDashboard.
+// SharedViaTeam as in SharedCustomDashboardSummary.
 type SharedCustomDashboard struct {
-	ID         string        `json:"id"`
-	Name       string        `json:"name"`
-	Definition string        `json:"definition"`
-	Owner      UserReference `json:"owner"`
-	SharedOn   time.Time     `json:"sharedOn"`
-	UpdatedOn  time.Time     `json:"updatedOn"`
+	ID            string                        `json:"id"`
+	Name          string                        `json:"name"`
+	Definition    string                        `json:"definition"`
+	Owner         UserReference                 `json:"owner"`
+	SharedViaTeam *CustomDashboardTeamShareTeam `json:"sharedViaTeam"`
+	SharedOn      time.Time                     `json:"sharedOn"`
+	UpdatedOn     time.Time                     `json:"updatedOn"`
 }

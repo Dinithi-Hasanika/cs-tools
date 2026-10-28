@@ -19,7 +19,11 @@ import { Eye, UsersRound } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
 import DashboardWidgetGrid from "@features/csm-dashboard/components/DashboardWidgetGrid";
-import { useGetSharedDashboard, useGetSharedDashboards } from "@features/csm-custom-dashboards/api/useDashboardShares";
+import {
+  useGetSharedDashboard,
+  useGetSharedDashboards,
+  type SharedDashboardSummary,
+} from "@features/csm-custom-dashboards/api/useDashboardShares";
 import DashboardSwitcher from "@features/csm-custom-dashboards/components/DashboardSwitcher";
 
 const BASE_PATH = "/dashboard/shared";
@@ -65,7 +69,9 @@ function SharedDashboardView({ id }: { id: string }): JSX.Element {
  * `/dashboard/shared/:dashboardId`): the dashboards other users shared with
  * the user (`GET /dashboards/shared`), view only: no edit, share or delete. A
  * switcher with search, as My Dashboards has, each entry naming who shared
- * it; the open one says "Shared by <owner>" and "View only". No id in the URL,
+ * it ("Shared by <owner>", or "Shared with your team <team> by <owner>" when
+ * it reached the user through a team); the open one says the same and
+ * "View only". No id in the URL,
  * or one that is not in the list, opens the first one; while the list is
  * being re-read an unknown id waits for it, as on My Dashboards.
  */
@@ -126,7 +132,10 @@ export default function SharedDashboardsPage(): JSX.Element {
     return <Navigate to={`${BASE_PATH}/${encodeURIComponent(dashboards[0].id)}`} replace />;
   }
 
-  const ownerName = (d: { owner: { name: string; email: string } }): string => d.owner.name || d.owner.email;
+  const sharedBy = (d: SharedDashboardSummary): string => {
+    const owner = d.owner.name || d.owner.email;
+    return d.sharedViaTeam ? `Shared with your team ${d.sharedViaTeam.name} by ${owner}` : `Shared by ${owner}`;
+  };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -135,13 +144,13 @@ export default function SharedDashboardsPage(): JSX.Element {
           <Typography variant="h5">Shared Dashboards</Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5, flexWrap: "wrap" }}>
             <Typography variant="body2" color="text.secondary">
-              {selected.name} &middot; Shared by {ownerName(selected)}
+              {selected.name} &middot; {sharedBy(selected)}
             </Typography>
             <Chip size="small" variant="outlined" icon={<Eye size={14} />} label="View only" />
           </Box>
         </Box>
         <DashboardSwitcher
-          entries={dashboards.map((d) => ({ id: d.id, name: d.name, secondary: `Shared by ${ownerName(d)}` }))}
+          entries={dashboards.map((d) => ({ id: d.id, name: d.name, secondary: sharedBy(d) }))}
           selectedId={selected.id}
           onSelect={(id) => void navigate(`${BASE_PATH}/${encodeURIComponent(id)}`)}
         />

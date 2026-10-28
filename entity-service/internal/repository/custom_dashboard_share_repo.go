@@ -44,10 +44,13 @@ type CustomDashboardShareRepository interface {
 	// RemoveShare stops sharing the owner's dashboard with a user; false when it
 	// was not shared with them (or is not the owner's).
 	RemoveShare(ctx context.Context, ownerID, dashboardID, userID string) (bool, error)
-	// ListSharedWithUser is every dashboard shared with the user, without
-	// definitions, ordered by name.
+	// ListSharedWithUser is every dashboard shared with the user, directly or
+	// with a team the user is in now (migration 0251), without definitions,
+	// ordered by name. Team shares count only for internal staff and never
+	// for the dashboard's owner.
 	ListSharedWithUser(ctx context.Context, userID string) ([]domain.SharedCustomDashboardSummary, error)
-	// GetSharedWithUser is one dashboard shared with the user; nil when it is not.
+	// GetSharedWithUser is one dashboard shared with the user, directly or
+	// with one of their teams as in ListSharedWithUser; nil when it is not.
 	GetSharedWithUser(ctx context.Context, userID, dashboardID string) (*domain.SharedCustomDashboard, error)
 }
 
@@ -139,16 +142,36 @@ func (r *customDashboardShareRepo) RemoveShare(ctx context.Context, ownerID, das
 }
 
 // sharedWithUserFrom is the join both recipient reads use: the dashboards
-// shared with $1, each with its owner.
+// shared with $1, each with its owner and the one share that grants it (alias
+// s: team_id / team_name / team_type are NULL for a direct share). Team
+// membership is read live from team_member: whoever is in the team now sees
+// the dashboard. A team share counts only when $1 is internal staff (person
+// shares check that when they are added; a team's members are not checked
+// then) and never for the dashboard's owner. With several shares of one
+// dashboard, the direct one wins, then the team first by name.
 const sharedWithUserFrom = `
-		 FROM custom_dashboard_share s
-		 JOIN custom_dashboard d ON d.id = s.dashboard_id
+		 FROM (
+		   SELECT DISTINCT ON (g.dashboard_id) g.dashboard_id, g.created_on, g.team_id, g.team_name, g.team_type
+		   FROM (
+		     SELECT ps.dashboard_id, ps.created_on, NULL::uuid AS team_id, NULL::text AS team_name, NULL::text AS team_type, 0 AS via
+		     FROM custom_dashboard_share ps
+		     WHERE ps.shared_with_user_id = $1::uuid
+		     UNION ALL
+		     SELECT ts.dashboard_id, ts.created_on, t.id, t.name::text, t.type::text, 1
+		     FROM custom_dashboard_team_share ts
+		     JOIN team t ON t.id = ts.team_id
+		     JOIN team_member tm ON tm.team_id = t.id AND tm.user_id = $1::uuid
+		     JOIN "user" me ON me.id = tm.user_id AND me.user_type = 'INTERNAL'
+		   ) g
+		   ORDER BY g.dashboard_id, g.via, lower(g.team_name), g.created_on
+		 ) s
+		 JOIN custom_dashboard d ON d.id = s.dashboard_id AND d.owner_user_id <> $1::uuid
 		 JOIN "user" o ON o.id = d.owner_user_id
-		 WHERE s.shared_with_user_id = $1::uuid`
+		 WHERE TRUE`
 
 func (r *customDashboardShareRepo) ListSharedWithUser(ctx context.Context, userID string) ([]domain.SharedCustomDashboardSummary, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT d.id::text, d.name, o.id::text, COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on`+
+		`SELECT d.id::text, d.name, o.id::text, COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on, `+sharedViaTeamColumns+
 			sharedWithUserFrom+`
 		 ORDER BY lower(d.name), d.id`,
 		userID)
@@ -159,11 +182,13 @@ func (r *customDashboardShareRepo) ListSharedWithUser(ctx context.Context, userI
 	out := []domain.SharedCustomDashboardSummary{}
 	for rows.Next() {
 		var ownerID, ownerEmail, ownerName string
+		var teamID, teamName, teamType *string
 		var d domain.SharedCustomDashboardSummary
-		if err := rows.Scan(&d.ID, &d.Name, &ownerID, &ownerEmail, &ownerName, &d.SharedOn, &d.UpdatedOn); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &ownerID, &ownerEmail, &ownerName, &d.SharedOn, &d.UpdatedOn, &teamID, &teamName, &teamType); err != nil {
 			return nil, fmt.Errorf("list dashboards shared with user: scan: %w", err)
 		}
 		d.Owner = dashboardShareUserRef(ownerID, ownerEmail, ownerName)
+		d.SharedViaTeam = sharedViaTeam(teamID, teamName, teamType)
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
@@ -174,12 +199,13 @@ func (r *customDashboardShareRepo) ListSharedWithUser(ctx context.Context, userI
 
 func (r *customDashboardShareRepo) GetSharedWithUser(ctx context.Context, userID, dashboardID string) (*domain.SharedCustomDashboard, error) {
 	var ownerID, ownerEmail, ownerName string
+	var teamID, teamName, teamType *string
 	var d domain.SharedCustomDashboard
 	err := r.db.QueryRow(ctx,
-		`SELECT d.id::text, d.name, d.definition, o.id::text, COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on`+
+		`SELECT d.id::text, d.name, d.definition, o.id::text, COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on, `+sharedViaTeamColumns+
 			sharedWithUserFrom+`
 		   AND d.id = $2::uuid`,
-		userID, dashboardID).Scan(&d.ID, &d.Name, &d.Definition, &ownerID, &ownerEmail, &ownerName, &d.SharedOn, &d.UpdatedOn)
+		userID, dashboardID).Scan(&d.ID, &d.Name, &d.Definition, &ownerID, &ownerEmail, &ownerName, &d.SharedOn, &d.UpdatedOn, &teamID, &teamName, &teamType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -187,5 +213,25 @@ func (r *customDashboardShareRepo) GetSharedWithUser(ctx context.Context, userID
 		return nil, fmt.Errorf("get dashboard shared with user: %w", err)
 	}
 	d.Owner = dashboardShareUserRef(ownerID, ownerEmail, ownerName)
+	d.SharedViaTeam = sharedViaTeam(teamID, teamName, teamType)
 	return &d, nil
+}
+
+// sharedViaTeamColumns are the granting share's team, NULL for a direct share.
+const sharedViaTeamColumns = `s.team_id::text, s.team_name, s.team_type`
+
+// sharedViaTeam is the team a shared dashboard reached the caller through; nil
+// for a direct share.
+func sharedViaTeam(id, name, typ *string) *domain.CustomDashboardTeamShareTeam {
+	if id == nil {
+		return nil
+	}
+	team := &domain.CustomDashboardTeamShareTeam{ID: *id}
+	if name != nil {
+		team.Name = *name
+	}
+	if typ != nil {
+		team.Type = *typ
+	}
+	return team
 }

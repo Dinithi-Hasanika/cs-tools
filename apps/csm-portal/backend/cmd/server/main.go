@@ -400,7 +400,7 @@ func main() {
 	// registry key) becomes the team's group id, once, here.
 	dashboardGenerator = handler.WithDashboardTeams(dashboardGenerator, dir.TeamResults())
 	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator)
-	customDashboardHandler := handler.NewCustomDashboardHandler(customerEntityClient)
+	customDashboardHandler := handler.NewCustomDashboardHandler(customerEntityClient).WithTeams(dir.TeamResults())
 	dashboardGenerateCodeHandler := handler.NewDashboardGenerateCodeHandler(codeDashboardGenerator)
 	caseHandler = caseHandler.WithAccessGuard(accessGuard)
 	projectHandler = projectHandler.WithAccessGuard(accessGuard)
@@ -521,6 +521,11 @@ func main() {
 	route("GET /dashboards/custom/{id}/shares", handler.PermWrite, customDashboardHandler.ListCustomDashboardShares)
 	route("PUT /dashboards/custom/{id}/shares/{userId}", handler.PermWrite, customDashboardHandler.AddCustomDashboardShare)
 	route("DELETE /dashboards/custom/{id}/shares/{userId}", handler.PermWrite, customDashboardHandler.RemoveCustomDashboardShare)
+	// Sharing a saved dashboard with a registry team (by team key); whoever
+	// is in the team sees it under Shared Dashboards.
+	route("GET /dashboards/custom/{id}/team-shares", handler.PermWrite, customDashboardHandler.ListCustomDashboardTeamShares)
+	route("PUT /dashboards/custom/{id}/team-shares/{teamKey}", handler.PermWrite, customDashboardHandler.AddCustomDashboardTeamShare)
+	route("DELETE /dashboards/custom/{id}/team-shares/{teamKey}", handler.PermWrite, customDashboardHandler.RemoveCustomDashboardTeamShare)
 	// Dashboards other users shared with the caller, view only. "shared" is a
 	// literal segment, like "custom", so it never collides with {dashboardId}.
 	route("GET /dashboards/shared", handler.PermWrite, customDashboardHandler.ListSharedDashboards)

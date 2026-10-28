@@ -57,6 +57,15 @@ wins, it must define `function render(`, at most 60,000 characters; a reply with
 `CANNOT:` is the model declining). 200 is `{source, reply, usage}` or `{declined, usage}`; errors and codes
 are the table above.
 
+## Model settings
+
+`ANTHROPIC_API_KEY` (a secret) and `CLAUDE_BASE_URL` go together: the key is the CSM AI gateway's, so
+**`CLAUDE_BASE_URL` is required whenever the key is set**, and a key without it fails the start
+(`loadConfig`). There is deliberately no fallback to the Anthropic API's own address: with the gateway's
+key it would start looking healthy and fail every call. Without a key the service still starts with model
+calls off (the AI routes answer 503 `not_configured`), so a local stack needs no secrets. In Choreo both
+are set per environment in Configs & Secrets (the key as a secret).
+
 ## Auth model
 
 - **Inbound: no authentication in the application.** The Choreo endpoint is **Organization**-visible

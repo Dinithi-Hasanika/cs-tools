@@ -34,9 +34,10 @@ const (
 // off: the service still starts (health answers) and the AI routes answer
 // 503, so a local stack without a key still works.
 //
-// BaseURL, when set, sends the model calls to an Anthropic-compatible gateway
-// instead of the Anthropic API (the key then belongs to that gateway). It is
-// deployment configuration: keep internal addresses out of committed files.
+// BaseURL is the CSM AI gateway the model calls go to; the key belongs to
+// that gateway. It is required whenever APIKey is set: there is no fallback
+// to the Anthropic API, where the gateway's key would only fail every call. It
+// is deployment configuration: keep internal addresses out of committed files.
 //
 // CatalogueFile / CodeCatalogueFile, when set, replace the catalogues built
 // into the binary (see package catalogue); in Choreo, file mounts.
@@ -50,11 +51,11 @@ type config struct {
 }
 
 // GatewayHost is the host model calls go to, for the startup log line:
-// BaseURL's host, or "api.anthropic.com" when no BaseURL is set. Never the
-// full URL, so a path or query carrying anything sensitive stays out of logs.
+// BaseURL's host, or "none" when model calls are off. Never the full URL, so
+// a path or query carrying anything sensitive stays out of logs.
 func (c config) GatewayHost() string {
 	if c.BaseURL == "" {
-		return "api.anthropic.com"
+		return "none"
 	}
 	u, err := url.Parse(c.BaseURL)
 	if err != nil {
@@ -68,8 +69,8 @@ func (c config) Enabled() bool { return c.APIKey != "" }
 
 // loadConfig reads ANTHROPIC_API_KEY, CLAUDE_MODEL (default
 // defaultClaudeModel), CLAUDE_TIMEOUT (a Go duration, default
-// defaultClaudeTimeout, must be > 0), CLAUDE_BASE_URL (optional; an absolute
-// http or https URL), CATALOGUE_FILE and CODE_CATALOGUE_FILE (optional).
+// defaultClaudeTimeout, must be > 0), CLAUDE_BASE_URL (an absolute http or
+// https URL; required when ANTHROPIC_API_KEY is set), CATALOGUE_FILE and CODE_CATALOGUE_FILE (optional).
 // Values are trimmed, so a key pasted with a trailing newline still works.
 // Pure, so tests pass their own getenv.
 func loadConfig(getenv func(string) string) (config, error) {
@@ -91,12 +92,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 			return config{}, fmt.Errorf("CLAUDE_BASE_URL must be an absolute http or https URL")
 		}
 	}
+	apiKey := strings.TrimSpace(getenv("ANTHROPIC_API_KEY"))
+	if apiKey != "" && baseURL == "" {
+		return config{}, fmt.Errorf("CLAUDE_BASE_URL is required when ANTHROPIC_API_KEY is set: the URL of the CSM AI gateway the key belongs to")
+	}
 	model := strings.TrimSpace(getenv("CLAUDE_MODEL"))
 	if model == "" {
 		model = defaultClaudeModel
 	}
 	return config{
-		APIKey:            strings.TrimSpace(getenv("ANTHROPIC_API_KEY")),
+		APIKey:            apiKey,
 		Model:             model,
 		Timeout:           timeout,
 		BaseURL:           baseURL,

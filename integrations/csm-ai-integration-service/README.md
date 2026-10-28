@@ -18,13 +18,13 @@ See `CLAUDE.md` for what lives here and what stays in the backend.
 |---|---|---|
 | `PORT` | `8080` | Listen port |
 | `ANTHROPIC_API_KEY` | (none) | Key for the model calls (a secret). Unset: the service starts, model calls are off |
-| `CLAUDE_BASE_URL` | Anthropic API | An Anthropic-compatible gateway; absolute http(s) URL |
+| `CLAUDE_BASE_URL` | (none) | **Required with the key**: the URL of the CSM AI gateway the key belongs to (absolute http(s) URL; an internal address, keep it out of committed files). No fallback to the Anthropic API |
 | `CLAUDE_MODEL` | `claude-sonnet-5-5` | Model id |
 | `CLAUDE_TIMEOUT` | `45s` | One model call's timeout (Go duration, > 0) |
 | `CATALOGUE_FILE` | built-in | A file replacing the built-in dashboard catalogue (Choreo file mount) |
 | `CODE_CATALOGUE_FILE` | built-in | A file replacing the built-in code catalogue (Choreo file mount) |
 
-A bad value, or a catalogue file that cannot be read, fails the start.
+A bad value, a key without `CLAUDE_BASE_URL`, or a catalogue file that cannot be read, fails the start.
 
 ## API endpoints
 

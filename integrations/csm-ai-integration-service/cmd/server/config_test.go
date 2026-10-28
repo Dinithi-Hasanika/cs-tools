@@ -35,8 +35,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 		c.BaseURL != "" || c.CatalogueFile != "" || c.CodeCatalogueFile != "" {
 		t.Errorf("defaults = %+v", c)
 	}
-	if c.GatewayHost() != "api.anthropic.com" {
-		t.Errorf("GatewayHost() = %q", c.GatewayHost())
+	if c.GatewayHost() != "none" {
+		t.Errorf("GatewayHost() = %q, want none with model calls off", c.GatewayHost())
 	}
 }
 
@@ -62,6 +62,26 @@ func TestLoadConfigReadsAndTrimsEveryVariable(t *testing.T) {
 	}
 	if c.GatewayHost() != "gateway.example.test" {
 		t.Errorf("GatewayHost() = %q, want the host only", c.GatewayHost())
+	}
+}
+
+func TestLoadConfigNeedsTheGatewayWithAKey(t *testing.T) {
+	for name, vars := range map[string]map[string]string{
+		"key, no gateway":    {"ANTHROPIC_API_KEY": "key"},
+		"key, blank gateway": {"ANTHROPIC_API_KEY": "key", "CLAUDE_BASE_URL": "   "},
+	} {
+		_, err := loadConfig(env(vars))
+		if err == nil || !strings.Contains(err.Error(), "CLAUDE_BASE_URL is required") {
+			t.Errorf("%s: err = %v, want the gateway required", name, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "key\"") {
+			t.Errorf("%s: error %q holds the key", name, err)
+		}
+	}
+	// No key at all still starts (model calls off); a gateway without a key
+	// is harmless and still checked.
+	if c, err := loadConfig(env(map[string]string{"CLAUDE_BASE_URL": "https://gateway.example.test"})); err != nil || c.Enabled() {
+		t.Errorf("gateway without a key: config %+v err %v, want off and no error", c, err)
 	}
 }
 

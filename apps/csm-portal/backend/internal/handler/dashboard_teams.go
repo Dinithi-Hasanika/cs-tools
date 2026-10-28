@@ -102,7 +102,7 @@ func (t dashboardTeams) knownTeams() string {
 
 // resolve swaps every team key or name in the definition's creTeam / sreTeam
 // filters (each widget's query and each pie slice's query) for that team's
-// group id, and checks every team filter: "in" only, top-level filters only
+// group id, and an account query's abtTeam key for the team's name, and checks every team filter: "in" only, top-level filters only
 // (not an anyOf branch), a team of the field's family, with a group id
 // configured. "__current_team__" is left as it is. Anything else in the
 // definition is untouched. A definition that is not a JSON object with a
@@ -158,6 +158,19 @@ func (t dashboardTeams) resolveQuery(q any, where string) (changed bool, err err
 	query, ok := q.(map[string]any)
 	if !ok {
 		return false, nil
+	}
+	if v, ok := query["abtTeam"]; ok {
+		// An account query's abtTeam: the account search matches the team's
+		// name (CRE or SRE team), so a key or name becomes the registry name.
+		value, _ := v.(string)
+		team, known := t.byName[strings.ToLower(strings.TrimSpace(value))]
+		if !known {
+			return false, fmt.Errorf("%w: %s: unknown team %q (known teams: %s)", errDashboardTeam, where, value, t.knownTeams())
+		}
+		if value != team.Name {
+			query["abtTeam"] = team.Name
+			changed = true
+		}
 	}
 	filters, _ := query["filters"].([]any)
 	for _, f := range filters {

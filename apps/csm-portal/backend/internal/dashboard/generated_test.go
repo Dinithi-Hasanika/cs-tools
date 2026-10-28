@@ -117,7 +117,7 @@ func TestParseGenerated_Rejects(t *testing.T) {
 		{"restricted", strings.Replace(widget(count), "{", `{"restricted":false,`, 1), `"restricted" cannot be set`},
 		{"filter presets", strings.Replace(widget(count), "{", `{"filterPresets":{},`, 1), `"filterPresets" cannot be set`},
 		{"isDefault", strings.Replace(widget(count), `"isDefault":false`, `"isDefault":true`, 1), `"isDefault" must be false`},
-		{"not case family", widget(`{"id":"w","displayName":"W","resourceType":"incident","shape":"count","gridWidth":3,"query":{}}`), `resourceType "incident" is not one of`},
+		{"not a supported resource type", widget(`{"id":"w","displayName":"W","resourceType":"incident_task","shape":"count","gridWidth":3,"query":{}}`), `resourceType "incident_task" is not one of`},
 		{"wrong value type", widget(`{"id":"w","displayName":"W","resourceType":"case","shape":"count","gridWidth":"3","query":{}}`), "invalid generated dashboard"},
 		{"cs and team based", strings.Replace(widget(count), `"isTeamBased":false`, `"isTeamBased":true`, 1), "contradictory configuration"},
 		{"no display name", strings.Replace(widget(count), `"displayName":"D",`, "", 1), `"displayName" is empty`},

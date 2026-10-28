@@ -55,8 +55,10 @@ var fieldsNotForGenerated = []string{"restricted", "defaultForTeamKeys", "includ
 // dropped), then the loader's own pipeline runs -- the implied "type" filters
 // are injected and every structural rule (shapes, slices/groupBy, grid width,
 // type and isTeamBased, ...) is validated. On top of that a generated
-// dashboard is case-family only (the catalogue's scope), never isDefault, and
-// sets none of fieldsNotForGenerated.
+// dashboard holds only case-family widgets and those of
+// generatedResourceRules (the catalogue's scope; their queries are checked
+// key by key, see checkGeneratedResourceWidget), is never isDefault, and sets
+// none of fieldsNotForGenerated.
 //
 // The result's ID is GeneratedPlaceholderID. Free-form parts (each "query",
 // "sortBy") are not checked field by field here; which filters Postgres
@@ -91,8 +93,14 @@ func ParseGenerated(raw []byte) (Dashboard, error) {
 		return Dashboard{}, fmt.Errorf("%w: \"isDefault\" must be false on a generated dashboard", ErrGeneratedInvalid)
 	}
 	for i, w := range d.Widgets {
+		if rules, ok := generatedResourceRules[w.ResourceType]; ok {
+			if err := checkGeneratedResourceWidget(i, w, rules); err != nil {
+				return Dashboard{}, err
+			}
+			continue
+		}
 		if !caseTableResourceTypes[w.ResourceType] {
-			return Dashboard{}, fmt.Errorf("%w: widgets[%d] (%q): resourceType %q is not one of case, service_request, engagement, security_report_analysis, announcement",
+			return Dashboard{}, fmt.Errorf("%w: widgets[%d] (%q): resourceType %q is not one of case, service_request, engagement, security_report_analysis, announcement, time_card, incident, change_request, problem, account, project, case_feedback",
 				ErrGeneratedInvalid, i, w.ID, w.ResourceType)
 		}
 	}

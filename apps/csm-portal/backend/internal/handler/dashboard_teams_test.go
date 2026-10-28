@@ -365,3 +365,28 @@ func TestCatalogueWithTeams_PassesAReadErrorThrough(t *testing.T) {
 		t.Fatal("want the catalogue's read error")
 	}
 }
+
+func TestDashboardTeams_TurnsAnAccountTeamKeyIntoItsName(t *testing.T) {
+	teams := testDashboardTeams(t)
+	for in, want := range map[string]string{"rigel": "Rigel", "RIGEL": "Rigel", "Rigel": "Rigel", "apollo": "Apollo", "americas": "Americas"} {
+		got, err := teams.resolve(teamDashboard(`{"abtTeam":"` + in + `","lifeCycle":"Customer"}`))
+		if err != nil {
+			t.Fatalf("%s: resolve: %v", in, err)
+		}
+		var d struct {
+			Widgets []struct {
+				Query map[string]any `json:"query"`
+			} `json:"widgets"`
+		}
+		if err := json.Unmarshal(got, &d); err != nil {
+			t.Fatal(err)
+		}
+		if q := d.Widgets[0].Query; q["abtTeam"] != want || q["lifeCycle"] != "Customer" {
+			t.Errorf("%s: query = %v, want abtTeam %q", in, q, want)
+		}
+	}
+	_, err := teams.resolve(teamDashboard(`{"abtTeam":"vega"}`))
+	if !errors.Is(err, errDashboardTeam) || !strings.Contains(err.Error(), `unknown team "vega"`) {
+		t.Fatalf("an unknown team: err = %v, want errDashboardTeam naming it", err)
+	}
+}

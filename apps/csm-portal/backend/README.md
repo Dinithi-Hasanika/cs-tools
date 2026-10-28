@@ -476,6 +476,7 @@ differ.
 | `CSM_AI_INTEGRATION_SERVICE_BASE_URL` | No | unset | AI integration service: makes the dashboard generators' model calls; unset, the generate pages answer with their samples. `https`, or `http` for a local host only | `https://ai.example.com` |
 | `CSM_AI_INTEGRATION_SERVICE_SCOPES` | No | none | Comma list of scopes | `ai.generate` |
 | `CSM_AI_INTEGRATION_SERVICE_TIMEOUT` | No | `55s` | One generate call's timeout (Go duration, > 0, shorter than `REST_WRITE_TIMEOUT`) | `55s` |
+| `DASHBOARD_GENERATE_CODE_ENABLED` | No | off | Exactly `true` registers `POST /dashboards/generate-code`, the code approach to dashboard generation (phase 2); off, the route does not exist. The webapp and csm-ai-integration-service use the same name: turn all three on together | `true` |
 | `SALES_ENTITY_BASE_URL` | No | unset | Sales entity GraphQL service backing `POST /scan-user`; unset makes only those lookups fail at call time. `https` base URL. Not listed in `.env.example` as active | `https://sales-entity.example.com` |
 | `GOOGLE_DRIVE_CLIENT_ID` | No | unset | OAuth2 client id for the Drive folder-browsing routes (`/files`) | `your-drive-client-id` |
 | `GOOGLE_DRIVE_CLIENT_SECRET` | No | unset | Matching client secret | `your-drive-client-secret` |

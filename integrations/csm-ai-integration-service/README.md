@@ -22,7 +22,8 @@ See `CLAUDE.md` for what lives here and what stays in the backend.
 | `CLAUDE_MODEL` | `claude-sonnet-5-5` | Model id |
 | `CLAUDE_TIMEOUT` | `45s` | One model call's timeout (Go duration, > 0) |
 | `CATALOGUE_FILE` | built-in | A file replacing the built-in dashboard catalogue (Choreo file mount) |
-| `CODE_CATALOGUE_FILE` | built-in | A file replacing the built-in code catalogue (Choreo file mount) |
+| `CODE_CATALOGUE_FILE` | built-in | A file replacing the built-in code catalogue (Choreo file mount); read only when code generation is on |
+| `DASHBOARD_GENERATE_CODE_ENABLED` | off | `true` (exactly) turns on `POST /ai/dashboards/generate-code`, the code approach (phase 2). Off, the route is not registered (404). The CSM portal backend and webapp use the same name: turn all three on together |
 
 A bad value, a key without `CLAUDE_BASE_URL`, or a catalogue file that cannot be read, fails the start.
 
@@ -32,7 +33,7 @@ A bad value, a key without `CLAUDE_BASE_URL`, or a catalogue file that cannot be
 |---|---|
 | `GET /health` | Liveness, always 200 |
 | `POST /ai/dashboards/generate` | One model call for a dashboard definition: returns the JSON objects the model wrote (see `CLAUDE.md`) |
-| `POST /ai/dashboards/generate-code` | One model call for a dashboard written as JavaScript: returns the source and a chat sentence |
+| `POST /ai/dashboards/generate-code` | One model call for a dashboard written as JavaScript: returns the source and a chat sentence. **Only when `DASHBOARD_GENERATE_CODE_ENABLED=true`** (phase 2) |
 
 ## Developer guide
 

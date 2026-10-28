@@ -16,7 +16,7 @@
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 interface ListState {
@@ -105,6 +105,34 @@ describe("MyDashboardsPage", () => {
     renderAt("/dashboard/my");
     expect(screen.getByText("You have no dashboards yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate Dashboard" })).toBeInTheDocument();
+  });
+
+  describe("the code approach's button (DASHBOARD_GENERATE_CODE_ENABLED)", () => {
+    const original = window.config;
+    afterEach(() => {
+      window.config = original;
+    });
+    const codeButton = () => screen.queryByRole("button", { name: "Generate AI Code (Experimental)" });
+
+    it("is not shown while the flag is off (the default), on either view", () => {
+      window.config = { ...original, DASHBOARD_GENERATE_CODE_ENABLED: undefined };
+      renderAt("/dashboard/my");
+      expect(screen.getByRole("button", { name: "Generate Dashboard" })).toBeInTheDocument();
+      expect(codeButton()).not.toBeInTheDocument();
+    });
+
+    it("is not shown on the empty state while the flag is off", () => {
+      window.config = { ...original, DASHBOARD_GENERATE_CODE_ENABLED: "TRUE" };
+      listState = { data: [] };
+      renderAt("/dashboard/my");
+      expect(codeButton()).not.toBeInTheDocument();
+    });
+
+    it("is shown beside Generate Dashboard when the flag is true", () => {
+      window.config = { ...original, DASHBOARD_GENERATE_CODE_ENABLED: true };
+      renderAt("/dashboard/my");
+      expect(codeButton()).toBeInTheDocument();
+    });
   });
 
   it("opens the first saved dashboard when the URL names none", () => {

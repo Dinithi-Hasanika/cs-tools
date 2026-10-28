@@ -377,6 +377,8 @@ services:
       # Dashboard generation: the model calls are made by
       # csm-ai-integration-service below; this backend holds no model client.
       CSM_AI_INTEGRATION_SERVICE_BASE_URL: http://csm-ai-integration-service:8080
+      # POST /dashboards/generate-code (phase 2): see csm-portal-webapp.
+      DASHBOARD_GENERATE_CODE_ENABLED: ${DASHBOARD_GENERATE_CODE_ENABLED:-false}
       # The team catalogue. Unset, every team filter returns nothing and the
       # backend warns "team registry is empty" at startup. These are the teams
       # seed-team-schedule.sql creates; the display names must match the seeded
@@ -429,6 +431,11 @@ services:
       CSM_PORTAL_AUTH_SIGN_IN_REDIRECT_URL: http://localhost:3001
       CSM_PORTAL_AUTH_SIGN_OUT_REDIRECT_URL: http://localhost:3001
       CSM_PORTAL_BACKEND_BASE_URL: http://localhost:8082
+      # The code approach to dashboard generation (phase 2), off by default.
+      # One value for the whole stack: set DASHBOARD_GENERATE_CODE_ENABLED=true
+      # in your shell or the root .env to turn it on in the webapp, the backend
+      # and csm-ai-integration-service together.
+      DASHBOARD_GENERATE_CODE_ENABLED: ${DASHBOARD_GENERATE_CODE_ENABLED:-false}
     ports:
       - "127.0.0.1:3001:8080"
 
@@ -546,6 +553,8 @@ services:
       # DASHBOARD_GENERATE_* names are still read as a fallback.
       CLAUDE_BASE_URL: ${CLAUDE_BASE_URL:-${DASHBOARD_GENERATE_BASE_URL:-}}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-${DASHBOARD_GENERATE_MODEL:-}}
+      # POST /ai/dashboards/generate-code (phase 2): see csm-portal-webapp.
+      DASHBOARD_GENERATE_CODE_ENABLED: ${DASHBOARD_GENERATE_CODE_ENABLED:-false}
     ports:
       - "127.0.0.1:8087:8080"
 

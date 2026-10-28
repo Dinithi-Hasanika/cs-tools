@@ -52,14 +52,22 @@ func main() {
 		slog.Error("dashboard catalogue", "err", err)
 		os.Exit(1)
 	}
-	codeCatalogue, err := catalogue.NewCode(cfg.CodeCatalogueFile)
-	if err != nil {
-		slog.Error("code catalogue", "err", err)
-		os.Exit(1)
+	// The code approach (phase 2) is off unless DASHBOARD_GENERATE_CODE_ENABLED
+	// is "true": its catalogue is then not even loaded.
+	codeCatalogueOrigin := "off"
+	var codeCatalogue catalogue.Source
+	if cfg.CodeGenerationEnabled {
+		codeCatalogue, err = catalogue.NewCode(cfg.CodeCatalogueFile)
+		if err != nil {
+			slog.Error("code catalogue", "err", err)
+			os.Exit(1)
+		}
+		codeCatalogueOrigin = codeCatalogue.Origin()
 	}
 	// Never the key.
 	slog.Info("model calls", "enabled", cfg.Enabled(), "model", cfg.Model, "timeout", cfg.Timeout,
-		"gateway", cfg.GatewayHost(), "catalogue", dashboardCatalogue.Origin(), "codeCatalogue", codeCatalogue.Origin())
+		"gateway", cfg.GatewayHost(), "catalogue", dashboardCatalogue.Origin(),
+		"codeGeneration", cfg.CodeGenerationEnabled, "codeCatalogue", codeCatalogueOrigin)
 
 	// Without a key the AI routes answer 503 not_configured.
 	var dashboardGenerator *dashboards.Generator
@@ -67,16 +75,13 @@ func main() {
 	if cfg.Enabled() {
 		client := claude.NewClient(claude.Config{APIKey: cfg.APIKey, BaseURL: cfg.BaseURL, Timeout: cfg.Timeout})
 		dashboardGenerator = dashboards.NewGenerator(client, cfg.Model, cfg.Timeout, dashboardCatalogue)
-		codeGenerator = dashboards.NewCodeGenerator(client, cfg.Model, cfg.Timeout, codeCatalogue)
+		if cfg.CodeGenerationEnabled {
+			codeGenerator = dashboards.NewCodeGenerator(client, cfg.Model, cfg.Timeout, codeCatalogue)
+		}
 	}
 	dashboardHandler := handler.NewDashboardHandler(dashboardGenerator, codeGenerator)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("POST /ai/dashboards/generate", dashboardHandler.Generate)
-	mux.HandleFunc("POST /ai/dashboards/generate-code", dashboardHandler.GenerateCode)
+	mux := newMux(dashboardHandler, cfg.CodeGenerationEnabled)
 
 	addr := ":" + envOrDefault("PORT", "8080")
 

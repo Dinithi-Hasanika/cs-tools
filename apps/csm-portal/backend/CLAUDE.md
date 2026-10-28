@@ -713,6 +713,16 @@ Flags named `CSM_MIGRATION_<FEATURE>_ENABLED` gate customer-onboarding cutover f
 
 - `CSM_MIGRATION_ONBOARDING_STATUS_ENABLED` → `GET /projects/{id}/onboarding-steps` (`OnboardingStepHandler`, `internal/handler/onboarding_steps.go`, `PermView`). It pages through the entity service's onboarding ledger (`CustomerEntityClient.SearchOnboardingSteps`, `internal/entity/onboarding.go` — a **typed** method, unlike the raw-passthrough rest of `customer.go`, because the handler regroups rows) with `filters.projectId`, at the upstream cap of 50 rows a page and at most `maxOnboardingStepPages` (40) pages, then regroups the flat newest-first rows into one entry per membership (invited email) with steps in flow order IDENTITY → DATABASE → EMAIL → REGISTRATION. It reports only what the ledger row holds (`step`, `status`, `attemptCount`, `lastError`, `eventType`, `eventModifiedOn`, `updatedOn`) — nothing derived or enriched; `lastError` is upstream error text and is passed through untouched for the webapp to render as plain text. Hitting the page cap sets `truncated: true` and logs a warning rather than failing. The webapp matches memberships to the project's contact rows by lower-cased email because `ProjectContact` carries no membership or `project_contact` id.
 
+**`DASHBOARD_GENERATE_CODE_ENABLED`** (not a `CSM_MIGRATION_*` cutover flag, but the same shape) keeps the
+code approach to dashboard generation dark until phase 2: exactly `true` (whitespace trimmed) registers
+`POST /dashboards/generate-code` and builds its handler (`loadGenerateCodeEnabled` / `generateCodeEnabled`
+in `cmd/server/main.go`, pinned by `generate_code_flag_test.go`); anything else leaves both out. Off, a POST
+to the path answers **405**, not 404, because `GET /dashboards/{dashboardId}` matches the path; the code
+handler is never reached either way. The route stays in `openapi.yaml` (the route-coverage test reads
+`main.go` as text, so a flagged registration still counts). The webapp (`isCodeDashboardGenerationEnabled`)
+and csm-ai-integration-service gate their side under the same name, so the three are turned on together:
+with the backend on and the service off, the call gets the service's 404 and shows "couldn't be reached".
+
 ## Commands
 
 ```bash

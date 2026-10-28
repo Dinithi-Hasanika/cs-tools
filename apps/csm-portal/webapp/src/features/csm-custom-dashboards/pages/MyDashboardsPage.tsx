@@ -31,6 +31,7 @@ import {
 import { Code, LayoutDashboard, Pencil, Plus, SearchIcon, Share2, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
+import { isCodeDashboardGenerationEnabled } from "@config/codeDashboardConfig";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useSuccessBanner } from "@context/success-banner/SuccessBannerContext";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
@@ -69,14 +70,11 @@ function GenerateDashboardButton(): JSX.Element {
 /**
  * Experimental: opens the code-based generate page
  * (`/dashboard/my/new-code`), where the model writes the dashboard as
- * code instead of a JSON definition. Shown beside GenerateDashboardButton so
- * the two approaches can be compared; removed or promoted once one is chosen.
- * Hidden while the JSON approach ships first (phase 1): set
- * SHOW_CODE_DASHBOARD_BUTTON to true to bring it back. The page itself stays
- * reachable at its URL.
+ * code instead of a JSON definition. Shown beside GenerateDashboardButton only
+ * when the code approach is on (`isCodeDashboardGenerationEnabled`,
+ * DASHBOARD_GENERATE_CODE_ENABLED): it is phase 2 and off by default, and
+ * while off its page answers with the 404 page too.
  */
-const SHOW_CODE_DASHBOARD_BUTTON = false;
-
 function GenerateCodeDashboardButton(): JSX.Element {
   const navigate = useNavigate();
   return (
@@ -218,7 +216,7 @@ export default function MyDashboardsPage(): JSX.Element {
           </Typography>
           <Box sx={{ mt: 2, display: "flex", gap: 1 }}>
             <GenerateDashboardButton />
-            {SHOW_CODE_DASHBOARD_BUTTON && <GenerateCodeDashboardButton />}
+            {isCodeDashboardGenerationEnabled() && <GenerateCodeDashboardButton />}
           </Box>
         </Box>
       </Box>
@@ -357,7 +355,7 @@ export default function MyDashboardsPage(): JSX.Element {
             Edit with AI
           </Button>
           <GenerateDashboardButton />
-          {SHOW_CODE_DASHBOARD_BUTTON && <GenerateCodeDashboardButton />}
+          {isCodeDashboardGenerationEnabled() && <GenerateCodeDashboardButton />}
         </Box>
       </Box>
       <SavedDashboardView id={selected.id} />

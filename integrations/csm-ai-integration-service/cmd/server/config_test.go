@@ -112,3 +112,18 @@ func TestWriteTimeoutLeavesRoomForTheModelCall(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeGenerationIsOnOnlyForExactlyTrue(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"": false, "false": false, "1": false, "TRUE": false, "True": false, "yes": false, "on": false,
+		"true": true, " true ": true,
+	} {
+		c, err := loadConfig(env(map[string]string{"DASHBOARD_GENERATE_CODE_ENABLED": raw}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.CodeGenerationEnabled != want {
+			t.Errorf("DASHBOARD_GENERATE_CODE_ENABLED=%q: enabled %v, want %v", raw, c.CodeGenerationEnabled, want)
+		}
+	}
+}

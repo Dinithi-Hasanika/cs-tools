@@ -63,7 +63,9 @@ paths:
       summary: Ask the model for a dashboard written as JavaScript.
       description: >
         One model call (the code approach). Returns the source and the chat
-        sentence, or the model's sentence when it declined.
+        sentence, or the model's sentence when it declined. **Off by default
+        (phase 2):** registered only when DASHBOARD_GENERATE_CODE_ENABLED is
+        exactly "true"; otherwise the path answers 404.
       operationId: generateCodeDashboard
       requestBody:
         required: true

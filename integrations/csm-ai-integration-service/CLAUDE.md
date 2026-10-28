@@ -24,7 +24,7 @@ the registry itself, so it is configured in one place.
 |---|---|
 | `GET /health` | liveness, always 200 |
 | `POST /ai/dashboards/generate` | the JSON dashboard generator (`internal/dashboards`, `internal/handler`) |
-| `POST /ai/dashboards/generate-code` | the code approach, phase 2 (`internal/dashboards/code.go`) |
+| `POST /ai/dashboards/generate-code` | the code approach, phase 2 (`internal/dashboards/code.go`); **registered only when `DASHBOARD_GENERATE_CODE_ENABLED` is exactly `true`** |
 
 ### `POST /ai/dashboards/generate`
 
@@ -49,6 +49,14 @@ the backend maps the code to its own status and user-facing text:
 | 502 | `model_call_failed` | any other call failure; a gateway 401/403 is this service's key problem, never passed on |
 
 ### `POST /ai/dashboards/generate-code`
+
+**Off by default: phase 1 ships the JSON approach only.** `newMux` (`cmd/server/routes.go`) registers
+this route only when `DASHBOARD_GENERATE_CODE_ENABLED` is exactly `true` (`codeGenerationEnabled`:
+`1`, `TRUE`, `yes` are off); off, the path answers 404, the code catalogue is not loaded and the code
+generator is not built. The CSM portal backend (`POST /dashboards/generate-code`) and webapp (the
+`/dashboard/my/new-code` page and its button) are gated by the same name, so the three are turned on
+together; with only some of them on, the feature fails (e.g. the backend's call here gets a 404 and shows
+"couldn't be reached"). Keep the route's code and tests working: phase 2 turns it on, it does not restore it.
 
 Body `{prompt, current?}`: the prompt (as above) and the source being edited (at most 60,000 characters;
 absent or "" on a first message). No team list: the code catalogue has no Teams section. The reply checks

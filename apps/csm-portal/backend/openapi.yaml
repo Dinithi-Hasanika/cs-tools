@@ -5316,12 +5316,16 @@ paths:
     post:
       summary: Generate a code-based dashboard from a chat message (experimental).
       description: >
-        Experimental counterpart of POST /dashboards/generate: turns the
+        **Off by default (phase 2):** registered only when the deployment sets
+        DASHBOARD_GENERATE_CODE_ENABLED to exactly "true"; otherwise the path
+        does not exist and answers 404. Experimental counterpart of POST
+        /dashboards/generate: turns the
         user's latest message on the Custom Dashboards code generate page into
         dashboard source code (JavaScript defining `render(portal, root)`,
         which reads its data through fixed portal APIs) plus a chat reply.
-        The model writes the code from its own catalogue; without a model API
-        key configured, every valid request gets the same sample source.
+        The model (through csm-ai-integration-service) writes the code from
+        its own catalogue; without that service configured, every valid
+        request gets the same sample source.
         Nothing is stored. CS engineers and admins only. 400 when the prompt
         is missing, blank or over 2000 characters, or `current` is over 60000
         characters. Generation failures map as on POST /dashboards/generate:

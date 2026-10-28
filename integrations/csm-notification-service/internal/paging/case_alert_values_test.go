@@ -154,6 +154,10 @@ func TestMergeCaseAlertSettings_EveryValueLandsInItsField(t *testing.T) {
 		{"CRE", "alertDuty.tiers", json.RawMessage(`["T1","T2"]`)},
 		{"CRE", "alertDuty.perTeam", json.RawMessage(`1`)},
 		{"CRE", "acknowledgement.requireBoth", json.RawMessage(`false`)},
+		{"CRE", "email.enabled", json.RawMessage(`true`)},
+		{"CRE", "email.teamLists", json.RawMessage(`{"atlas":"atlas-list@example.test"}`)},
+		{"CRE", "email.creTeamList", json.RawMessage(`"cre-list@example.test"`)},
+		{"CRE", "email.csTeamList", json.RawMessage(`"cs-list@example.test"`)},
 		{"SRE", "trigger.priorities", json.RawMessage(`["S0"]`)},
 		{"SRE", "onLeave", json.RawMessage(`"skip"`)},
 		{"SRE", "teams.abtType", json.RawMessage(`"sre-abt"`)},
@@ -164,6 +168,11 @@ func TestMergeCaseAlertSettings_EveryValueLandsInItsField(t *testing.T) {
 		{"SRE", "timing.includeL4", json.RawMessage(`true`)},
 		{"SRE", "unansweredChat", json.RawMessage(`true`)},
 		{"SRE", "smeHandoffChat", json.RawMessage(`true`)},
+		{"SRE", "enabled", json.RawMessage(`true`)},
+		{"SRE", "channel", json.RawMessage(`"chat"`)},
+		{"SRE", "safety.maxCallsPerLadder", json.RawMessage(`7`)},
+		{"SRE", "safety.callWithoutVerifiedLeads", json.RawMessage(`true`)},
+		{"SRE", "safety.callHeadsWithoutLowerTiers", json.RawMessage(`true`)},
 	}
 	merged, _, changes, err := MergeCaseAlertSettings(cfg, CaseAlertSettings{Values: values})
 	if err != nil {
@@ -192,6 +201,10 @@ func TestMergeCaseAlertSettings_EveryValueLandsInItsField(t *testing.T) {
 		"tiers":            slices.Equal(c.AlertTiers(), []string{"T1", "T2"}),
 		"per team":         c.AlertDuty.PerTeam == 1,
 		"require both":     !c.RequireBothGestures(),
+		"email on":         c.Email.Enabled,
+		"email team lists": reflect.DeepEqual(c.Email.TeamLists, map[string]string{"atlas": "atlas-list@example.test"}),
+		"email cre list":   c.Email.CRETeamList == "cre-list@example.test",
+		"email cs list":    c.Email.CSTeamList == "cs-list@example.test",
 		"sre priorities":   slices.Equal(s.Start.Priorities, []string{"S0"}),
 		"sre on leave":     s.OnLeave == OnLeaveSkip,
 		"sre abts":         slices.Equal(s.Teams.ABTs, []string{"apollo", "artemis", "iaas"}) && s.Teams.ABTType == "sre-abt",
@@ -202,6 +215,11 @@ func TestMergeCaseAlertSettings_EveryValueLandsInItsField(t *testing.T) {
 		"unanswered chat":  s.UnansweredChat,
 		"handoff chat":     s.SMEHandoffChat,
 		"no safety change": merged.CRE.Safety.MaxCallsPerLadder == cfg.CRE.Safety.MaxCallsPerLadder,
+		"sre enabled":      s.Enabled,
+		"sre channel":      s.Channel == ChannelChat,
+		"sre max calls":    s.Safety.MaxCallsPerLadder == 7,
+		"sre leads hold":   s.Safety.CallWithoutVerifiedLeads,
+		"sre heads hold":   s.Safety.CallHeadsWithoutLowerTiers,
 	}
 	for name, ok := range checks {
 		if !ok {
@@ -347,8 +365,12 @@ func TestCaseAlertKeysMatchTheTab(t *testing.T) {
 		"teams.rotaTeams": caseAlertCRE, "teams.unassignedTeamLead": caseAlertCRE, "teams.unassignedTeamLeadCount": caseAlertCRE,
 		"heads.cre": caseAlertCRE, "heads.cs": caseAlertCRE, "alertDuty.tiers": caseAlertCRE, "alertDuty.perTeam": caseAlertCRE,
 		"acknowledgement.requireBoth": caseAlertCRE,
-		"teams.defaultRota":           caseAlertSRE, "timing.initialWait": caseAlertSRE, "timing.interval": caseAlertSRE,
+		"email.enabled":               caseAlertCRE, "email.teamLists": caseAlertCRE, "email.creTeamList": caseAlertCRE,
+		"email.csTeamList":  caseAlertCRE,
+		"teams.defaultRota": caseAlertSRE, "timing.initialWait": caseAlertSRE, "timing.interval": caseAlertSRE,
 		"timing.includeL4": caseAlertSRE, "unansweredChat": caseAlertSRE, "smeHandoffChat": caseAlertSRE,
+		"enabled": caseAlertBoth, "channel": caseAlertBoth, "safety.maxCallsPerLadder": caseAlertBoth,
+		"safety.callWithoutVerifiedLeads": caseAlertBoth, "safety.callHeadsWithoutLowerTiers": caseAlertBoth,
 	}
 	if len(want) != len(caseAlertKeys) {
 		t.Errorf("%d keys here, %d listed", len(caseAlertKeys), len(want))
@@ -389,6 +411,200 @@ func TestMergeCaseAlertSettings_SMEValues(t *testing.T) {
 	for _, want := range []string{`"SME":{`, `"timing.interval":{"source":"saved","value":"10m"}`, `"teams":{"source":"saved"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("running does not carry %s:\n%s", want, b)
+		}
+	}
+}
+
+// The ladders' own switches (enabled, channel, safety) and the SME page's
+// on/off and channel can be saved on the tab, laid over the file like any
+// other value. A file with no sme: section still gets the SME page from the
+// tab.
+func TestMergeCaseAlertSettings_Switches(t *testing.T) {
+	cfg := loadConfigText(t, prodShapedConfig)
+	cfg.SME = SMEConfig{}
+	saved := CaseAlertSettings{Values: []CaseAlertValue{
+		{"SME", "enabled", json.RawMessage(`true`)},
+		{"SME", "channel", json.RawMessage(`"chat"`)},
+		{"CRE", "channel", json.RawMessage(`"CHAT"`)},
+		{"SRE", "enabled", json.RawMessage(`false`)},
+		{"SRE", "safety.callWithoutVerifiedLeads", json.RawMessage(`true`)},
+		{"SRE", "safety.callHeadsWithoutLowerTiers", json.RawMessage(`true`)},
+		{"SRE", "safety.maxCallsPerLadder", json.RawMessage(`4`)},
+	}}
+	merged, _, _, err := MergeCaseAlertSettings(cfg, saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !merged.SME.Enabled || merged.SME.Channel != ChannelChat {
+		t.Fatalf("sme = enabled %v channel %q", merged.SME.Enabled, merged.SME.Channel)
+	}
+	if merged.CRE.Channel != ChannelChat || merged.SRE.Enabled {
+		t.Fatalf("cre channel %q, sre enabled %v", merged.CRE.Channel, merged.SRE.Enabled)
+	}
+	if s := merged.SRE.Safety; !s.CallWithoutVerifiedLeads || !s.CallHeadsWithoutLowerTiers || s.MaxCallsPerLadder != 4 {
+		t.Fatalf("sre safety = %+v", s)
+	}
+	if cfg.SME.Enabled || cfg.CRE.Channel == ChannelChat {
+		t.Fatal("the merge wrote into the caller's configuration")
+	}
+	running := RunningCaseAlertValues(merged, SavedCaseAlertKeys(saved))
+	b, _ := json.Marshal(running)
+	for _, want := range []string{
+		`"enabled":{"source":"saved","value":true}`,
+		`"channel":{"source":"saved","value":"chat"}`,
+		`"safety.maxCallsPerLadder":{"source":"saved","value":4}`,
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("running does not carry %s:\n%s", want, b)
+		}
+	}
+}
+
+// A saved channel the alert service does not know is refused, and the merge
+// keeps the file.
+func TestMergeCaseAlertSettings_UnknownChannelKeepsTheFile(t *testing.T) {
+	cfg := loadConfigText(t, prodShapedConfig)
+	saved := CaseAlertSettings{Values: []CaseAlertValue{{"CRE", "channel", json.RawMessage(`"sms"`)}}}
+	if _, _, _, err := MergeCaseAlertSettings(cfg, saved); err == nil {
+		t.Fatal("an unknown channel was accepted")
+	}
+	saved = CaseAlertSettings{Values: []CaseAlertValue{{"SME", "channel", json.RawMessage(`""`)}}}
+	if _, _, _, err := MergeCaseAlertSettings(cfg, saved); err == nil {
+		t.Fatal("an empty SME channel was accepted")
+	}
+}
+
+// Each SRE team's channel is the ladder's narrowed by its own; the SME
+// teams with a room use the SME page's channel; whether a ladder runs needs
+// the file's master switch too.
+func TestEffectiveChannels(t *testing.T) {
+	cfg := Config{
+		Enabled: true,
+		CRE:     LadderConfig{Enabled: true, Channel: ChannelBoth},
+		SRE: LadderConfig{
+			Enabled:      true,
+			Channel:      ChannelBoth,
+			Teams:        TeamKeys{ABTs: []string{"apollo", "artemis", "iaas"}},
+			TeamChats:    map[string]Chat{"apollo": {Audience: "Apollo"}},
+			TeamChannels: map[string]Channel{"iaas": ChannelChat, "artemis": ChannelLog},
+		},
+		SME: SMEConfig{Enabled: true, Channel: ChannelChat, TeamChats: map[string]Chat{"choreo-runtime": {Audience: "Choreo Runtime SME"}}},
+	}
+	got := EffectiveChannels(cfg)
+	want := []EffectiveChannel{
+		{Team: "apollo", Channel: "both", Room: true},
+		{Team: "artemis", Channel: "log", TeamChannel: "log"},
+		{Team: "iaas", Channel: "chat", TeamChannel: "chat"},
+	}
+	if !reflect.DeepEqual(got["SRE"].Teams, want) || got["SRE"].Channel != "both" || !got["SRE"].Enabled {
+		t.Fatalf("SRE = %+v", got["SRE"])
+	}
+	if sme := got["SME"]; !sme.Enabled || sme.Channel != "chat" || len(sme.Teams) != 1 || sme.Teams[0].Team != "choreo-runtime" || !sme.Teams[0].Room {
+		t.Fatalf("SME = %+v", sme)
+	}
+	cfg.Enabled = false
+	if got := EffectiveChannels(cfg); got["CRE"].Enabled || got["SRE"].Enabled || got["SME"].Enabled {
+		t.Fatalf("the master switch off still reads as running: %+v", got)
+	}
+	// An unset channel reads as call, the code's default.
+	if got := EffectiveChannels(Config{}); got["CRE"].Channel != "call" {
+		t.Fatalf("unset channel = %q", got["CRE"].Channel)
+	}
+}
+
+// The running report says how each assignment group reaches a team, file and
+// saved together, so the tab can tell a group the file already routes from one
+// nothing routes.
+func TestCaseAlertGroupRouting(t *testing.T) {
+	cfg := Config{
+		SRE: LadderConfig{
+			Teams: TeamKeys{
+				ABTs:          []string{"apollo", "artemis"},
+				Aliases:       map[string]string{" Apollo SRE Group ": "Apollo", "artemis sre group": "artemis", "": "apollo"},
+				DefaultGroups: []string{"MS/PC SRE Group", "default sre group", "Default SRE Group"},
+			},
+			TeamChats:     map[string]Chat{"apollo": {Audience: "Apollo"}, "artemis": {Audience: "Artemis"}},
+			TeamlessChats: []string{"Apollo", "artemis"},
+		},
+		CRE: LadderConfig{Teams: TeamKeys{Aliases: map[string]string{"americas": "americas_cre_team"}}},
+	}
+	got := CaseAlertGroupRouting(cfg)
+	sre := got["SRE"]
+	if !reflect.DeepEqual(sre.Aliases, map[string]string{"apollo sre group": "apollo", "artemis sre group": "artemis"}) {
+		t.Fatalf("SRE aliases = %v", sre.Aliases)
+	}
+	if !reflect.DeepEqual(sre.DefaultGroups, []string{"default sre group", "ms/pc sre group"}) {
+		t.Fatalf("SRE default groups = %v", sre.DefaultGroups)
+	}
+	if !reflect.DeepEqual(sre.TeamlessRooms, []string{"apollo", "artemis"}) {
+		t.Fatalf("SRE teamless rooms = %v", sre.TeamlessRooms)
+	}
+	cre := got["CRE"]
+	if cre.Aliases["americas"] != "americas_cre_team" || len(cre.DefaultGroups) != 0 || len(cre.TeamlessRooms) != 0 {
+		t.Fatalf("CRE = %+v", cre)
+	}
+	// Empty, never null on the wire.
+	b, err := json.Marshal(CaseAlertGroupRouting(Config{}))
+	if err != nil || strings.Contains(string(b), "null") {
+		t.Fatalf("empty routing = %s, %v", b, err)
+	}
+	if _, ok := RunningCaseAlertValues(cfg, nil)["groups"]; !ok {
+		t.Fatal("the running report carries no groups")
+	}
+}
+
+// The tab shows every CRE setting, including the ones only the file or the
+// code sets: whether a stopped chain replies, the rung emails (counted or
+// flagged, never their addresses), whether the rule table is the built-in
+// one, and when each step is called -- the same minutes the engine runs on.
+func TestRunningCaseAlertValues_CREFileOnlyShowsTheWholeChain(t *testing.T) {
+	cfg := loadConfigText(t, prodShapedConfig)
+	cfg.CRE.Email = RungEmail{
+		Enabled:     true,
+		TeamLists:   map[string]string{"atlas": "atlas-list@example.test", "vega": "vega-list@example.test"},
+		CRETeamList: "cre-list@example.test",
+	}
+	b, _ := json.Marshal(RunningCaseAlertValues(cfg, nil))
+	var r struct {
+		FileOnly map[string]map[string]json.RawMessage `json:"fileOnly"`
+	}
+	if err := json.Unmarshal(b, &r); err != nil {
+		t.Fatal(err)
+	}
+	// The lists are tab values now (shown with their addresses, like a
+	// head's); the read-only summary still only counts or flags them.
+	if fo, _ := json.Marshal(r.FileOnly); strings.Contains(string(fo), "list@example.test") {
+		t.Fatal("a rung email address was reported among the file-only values")
+	}
+	cre, sre := r.FileOnly["CRE"], r.FileOnly["SRE"]
+	for key, want := range map[string]string{
+		"ackChat":           "true",
+		"email.enabled":     "true",
+		"email.teamLists":   "2",
+		"email.creTeamList": "true",
+		"email.csTeamList":  "false",
+		"rules.custom":      "false",
+	} {
+		if got := string(cre[key]); got != want {
+			t.Errorf("CRE %s = %s, want %s", key, got, want)
+		}
+	}
+	var timing map[string][][]int
+	if err := json.Unmarshal(cre["timing"], &timing); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := timing["S0"], [][]int{{0}, {1, 2, 3}, {4, 5, 6}, {8, 9, 10}, {12, 13, 14}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("S0 timing = %v, want %v (the rules sheet's CRE timing)", got, want)
+	}
+	if got := timing["S1"][1]; !reflect.DeepEqual(got, []int{9, 11, 13}) {
+		t.Errorf("S1 L1 = %v, want [9 11 13]", got)
+	}
+	if string(sre["ackChat"]) != "true" {
+		t.Errorf("SRE ackChat = %s, want true", sre["ackChat"])
+	}
+	for _, key := range []string{"timing", "email.enabled", "rules.custom"} {
+		if _, ok := sre[key]; ok {
+			t.Errorf("SRE reports %s, a CRE-only setting", key)
 		}
 	}
 }

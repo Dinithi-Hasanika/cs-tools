@@ -416,3 +416,150 @@ func TestPgProjectUpdateService_DualWriteDispatchesExactlyOneMirrorCallOnSuccess
 		t.Fatalf("ServiceNow mirror UpdateProject id = %q, want %q", mirror.gotID, id)
 	}
 }
+
+// TestPgProjectUpdateService_MirrorDropsOnboardingFieldsFromMixedRequest pins
+// that a request mixing a mirrorable field with the Postgres-only onboarding
+// fields still reaches the mirror, carrying only the mirrorable field.
+func TestPgProjectUpdateService_MirrorDropsOnboardingFieldsFromMixedRequest(t *testing.T) {
+	hasAgent := true
+	status := "In-Progress"
+	owner := "00000000-0000-0000-0000-000000000001"
+	start, planned, golive, expiry := "2026-03-01", "2026-05-01", "2026-05-15", "2027-03-01"
+	repo := &stubProjectUpdateRepo{}
+	mirror := &stubProjectMirror{}
+	dispatcher := NewSNWritebackDispatcher(&recordingSNWritebackFailures{})
+	svc := NewProjectUpdateServiceWithSNWriteback(repo, testProjectUserRepo(), alwaysUnrestrictedAccess{}, dispatcher, mirror)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	req := domain.ProjectUpdateRequest{
+		HasAgent: &hasAgent, OnboardingStatus: &status, OnboardingOwner: &owner,
+		OnboardingStartDate: &start, OnboardingGoLivePlanDate: &planned,
+		OnboardingGoLiveDate: &golive, OnboardingExpiryDate: &expiry,
+	}
+	if _, err := svc.UpdateProject(ctx, "11111111-1111-1111-1111-111111111111", req); err != nil {
+		t.Fatalf("UpdateProject() error = %v, want success", err)
+	}
+	if repo.gotReq.OnboardingStartDate == nil || repo.gotReq.OnboardingStatus == nil {
+		t.Fatalf("repo must still receive the onboarding fields, got %+v", repo.gotReq)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if mirror.calls != 1 {
+		t.Fatalf("mirror calls = %d, want 1", mirror.calls)
+	}
+	got := mirror.gotReq
+	if got.HasAgent == nil || !*got.HasAgent {
+		t.Fatalf("mirror request lost hasAgent: %+v", got)
+	}
+	if got.OnboardingStatus != nil || got.OnboardingOwner != nil || hasOnboardingDates(got) {
+		t.Fatalf("mirror request still carries onboarding fields: %+v", got)
+	}
+}
+
+// TestPgProjectUpdateService_AcceptsOnboardingFields pins that an onboarding-only
+// request counts as a stored field, reaches the repository, and is never
+// dispatched to the dual-write mirror.
+func TestPgProjectUpdateService_AcceptsOnboardingFields(t *testing.T) {
+	status := "In-Progress"
+	owner := "00000000-0000-0000-0000-000000000001"
+	repo := &stubProjectUpdateRepo{}
+	mirror := &stubProjectMirror{}
+	dispatcher := NewSNWritebackDispatcher(&recordingSNWritebackFailures{})
+	svc := NewProjectUpdateServiceWithSNWriteback(repo, testProjectUserRepo(), alwaysUnrestrictedAccess{}, dispatcher, mirror)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	req := domain.ProjectUpdateRequest{OnboardingStatus: &status, OnboardingOwner: &owner}
+	if _, err := svc.UpdateProject(ctx, "11111111-1111-1111-1111-111111111111", req); err != nil {
+		t.Fatalf("UpdateProject() error = %v, want success", err)
+	}
+	if !repo.called || repo.gotReq.OnboardingStatus == nil || *repo.gotReq.OnboardingStatus != status ||
+		repo.gotReq.OnboardingOwner == nil || *repo.gotReq.OnboardingOwner != owner {
+		t.Fatalf("repo called = %v with %+v, want onboarding fields passed through", repo.called, repo.gotReq)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if mirror.calls != 0 {
+		t.Fatalf("mirror calls = %d, want 0 for an onboarding-only request", mirror.calls)
+	}
+}
+
+// TestPgProjectUpdateService_RejectsMalformedOnboardingOwner pins that a
+// non-UUID owner is a 400 from the service, before the repository is called.
+func TestPgProjectUpdateService_RejectsMalformedOnboardingOwner(t *testing.T) {
+	owner := "not-a-uuid"
+	repo := &stubProjectUpdateRepo{}
+	svc := NewProjectUpdateService(repo, testProjectUserRepo(), alwaysUnrestrictedAccess{})
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	_, err := svc.UpdateProject(ctx, "11111111-1111-1111-1111-111111111111", domain.ProjectUpdateRequest{OnboardingOwner: &owner})
+	var ve *apierror.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("UpdateProject() error = %v, want *apierror.ValidationError", err)
+	}
+	if repo.called {
+		t.Fatal("repository must not be called for a malformed onboardingOwner")
+	}
+}
+
+// TestSNProjectUpdateService_RejectsOnboardingFields pins that the ServiceNow
+// data source rejects the Postgres-only onboarding fields with a 400 before
+// any upstream call (the nil client would panic if one were attempted).
+func TestSNProjectUpdateService_RejectsOnboardingFields(t *testing.T) {
+	status := "Completed"
+	owner := "00000000-0000-0000-0000-000000000001"
+	hasAgent := true
+	date := "2026-03-01"
+	svc := &snProjectUpdateService{}
+	for name, req := range map[string]domain.ProjectUpdateRequest{
+		"status":            {OnboardingStatus: &status},
+		"owner":             {OnboardingOwner: &owner},
+		"start date":        {OnboardingStartDate: &date},
+		"go-live plan date": {OnboardingGoLivePlanDate: &date},
+		"go-live date":      {OnboardingGoLiveDate: &date},
+		"expiry date":       {OnboardingExpiryDate: &date},
+		"with other fields": {HasAgent: &hasAgent, OnboardingStatus: &status},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.UpdateProject(context.Background(), "11111111-1111-1111-1111-111111111111", req)
+			var ve *apierror.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v, want ValidationError", err)
+			}
+		})
+	}
+}
+
+// TestPgProjectUpdateService_OnboardingDates pins that date-only requests count
+// as stored fields and reach the repository without a mirror dispatch, and that
+// a malformed date or a go-live before the start is a 400 before the repository.
+func TestPgProjectUpdateService_OnboardingDates(t *testing.T) {
+	str := func(s string) *string { return &s }
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	const id = "11111111-1111-1111-1111-111111111111"
+
+	repo := &stubProjectUpdateRepo{}
+	svc := NewProjectUpdateService(repo, testProjectUserRepo(), alwaysUnrestrictedAccess{})
+	req := domain.ProjectUpdateRequest{OnboardingStartDate: str("2026-03-01"), OnboardingGoLiveDate: str("2026-04-01")}
+	if _, err := svc.UpdateProject(ctx, id, req); err != nil || !repo.called {
+		t.Fatalf("valid dates: err = %v, repo called = %v", err, repo.called)
+	}
+
+	for name, bad := range map[string]domain.ProjectUpdateRequest{
+		"malformed":      {OnboardingStartDate: str("01/03/2026")},
+		"impossible":     {OnboardingExpiryDate: str("2026-02-30")},
+		"timestamp":      {OnboardingGoLivePlanDate: str("2026-03-01T00:00:00Z")},
+		"plan < start":   {OnboardingStartDate: str("2026-03-01"), OnboardingGoLivePlanDate: str("2026-02-28")},
+		"expiry < start": {OnboardingStartDate: str("2026-03-01"), OnboardingExpiryDate: str("2026-01-01")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubProjectUpdateRepo{}
+			svc := NewProjectUpdateService(repo, testProjectUserRepo(), alwaysUnrestrictedAccess{})
+			_, err := svc.UpdateProject(ctx, id, bad)
+			var ve *apierror.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v, want ValidationError", err)
+			}
+			if repo.called {
+				t.Fatal("repository must not be called")
+			}
+		})
+	}
+}

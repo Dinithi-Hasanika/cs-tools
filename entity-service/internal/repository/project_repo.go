@@ -26,7 +26,9 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -505,6 +507,7 @@ func (r *projectRepo) GetProjectByID(ctx context.Context, id string, scope Searc
 		        INITCAP(REPLACE(p.onboarding_status::TEXT, '_', '-')),
 		        `+accountIsPartnerColumn+`,
 		        p.onboarding_go_live_plan_date, p.onboarding_go_live_date, p.onboarding_expiry_date,
+		        p.onboarding_start_date,
 		        EXTRACT(EPOCH FROM p.total_query_duration) / 3600,
 		        EXTRACT(EPOCH FROM p.remaining_query_duration) / 3600,
 		        -- ASSUMPTION, not confirmed against a live payload: project.consumed_duration
@@ -553,6 +556,7 @@ func (r *projectRepo) GetProjectByID(ctx context.Context, id string, scope Searc
 		&v.ComplianceViolationClosureState, &v.ComplianceViolationDate, &v.SuspensionProcessState,
 		&v.OnboardingStatus, &v.Account.IsPartner,
 		&v.GoLivePlanDate, &v.GoLiveDate, &v.OnboardingExpiryDate,
+		&v.OnboardingStartDate,
 		&v.TotalQueryHours, &v.RemainingQueryHours,
 		&v.ConsumedQueryHours,
 		&v.TotalOnboardingHours, &v.ConsumedOnboardingHours, &v.RemainingOnboardingHours,
@@ -625,6 +629,14 @@ func (r *projectRepo) UpdateProject(ctx context.Context, id string, req domain.P
 	if err := validateClosureFields(req); err != nil {
 		return domain.ProjectUpdateResult{}, err
 	}
+	if req.OnboardingStatus != nil {
+		if _, err := onboardingStatusEnumLabels("onboardingStatus", []string{*req.OnboardingStatus}); err != nil {
+			return domain.ProjectUpdateResult{}, err
+		}
+	}
+	if _, err := ParseOnboardingDates(req); err != nil {
+		return domain.ProjectUpdateResult{}, err
+	}
 	// WithSystemIdentity: this writes only project and account, neither
 	// RLS-protected, and carries no caller-visible rows. The service already
 	// authorized the caller (resolveUpdatedBy); this only gives Scoped the
@@ -636,6 +648,14 @@ func (r *projectRepo) UpdateProject(ctx context.Context, id string, req domain.P
 	})
 }
 
+// firstDate returns a if set, else b.
+func firstDate(a, b *time.Time) *time.Time {
+	if a != nil {
+		return a
+	}
+	return b
+}
+
 // updateProjectTx is UpdateProject's body, run inside tx.
 func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.ProjectUpdateRequest, updatedBy string) (domain.ProjectUpdateResult, error) {
 	// Lock the row first (mirrors CaseRepository.UpdateCase's own
@@ -644,7 +664,9 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 	// nonexistent id is caught as NotFoundError before either UPDATE below
 	// runs.
 	var accountID *string
-	err := tx.QueryRow(ctx, `SELECT account_id FROM project WHERE id = $1 FOR UPDATE`, id).Scan(&accountID)
+	var stored OnboardingDates
+	err := tx.QueryRow(ctx, `SELECT account_id, onboarding_start_date, onboarding_go_live_plan_date, onboarding_go_live_date, onboarding_expiry_date
+		FROM project WHERE id = $1 FOR UPDATE`, id).Scan(&accountID, &stored.Start, &stored.GoLivePlan, &stored.GoLive, &stored.Expiry)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ProjectUpdateResult{}, &apierror.NotFoundError{Msg: "project not found"}
 	}
@@ -665,6 +687,49 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 		return domain.ProjectUpdateResult{}, &apierror.ConflictError{Msg: "project has no linked account; hasAgent/hasKbReferences cannot be set"}
 	}
 
+	// The onboarding owner must be an active internal user. A bad id is the
+	// caller's input error (400), not a missing project, so it is not a 404.
+	var onboardingStatus, onboardingOwner *string
+	if req.OnboardingStatus != nil {
+		labels, err := onboardingStatusEnumLabels("onboardingStatus", []string{*req.OnboardingStatus})
+		if err != nil {
+			return domain.ProjectUpdateResult{}, err
+		}
+		onboardingStatus = &labels[0]
+	}
+	if req.OnboardingOwner != nil {
+		var userType *string
+		var active *bool
+		err := tx.QueryRow(ctx, `SELECT user_type::TEXT, is_active FROM "user" WHERE id = $1`, *req.OnboardingOwner).Scan(&userType, &active)
+		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+			return domain.ProjectUpdateResult{}, &apierror.ValidationError{Msg: "onboardingOwner: " + strconv.Quote(*req.OnboardingOwner) + " is not a valid user id"}
+		}
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (userType == nil || *userType != "INTERNAL" || (active != nil && !*active))) {
+			return domain.ProjectUpdateResult{}, &apierror.ValidationError{Msg: "onboardingOwner: " + strconv.Quote(*req.OnboardingOwner) + " is not an active internal user"}
+		}
+		if err != nil {
+			return domain.ProjectUpdateResult{}, fmt.Errorf("update project: check onboarding owner: %w", err)
+		}
+		onboardingOwner = req.OnboardingOwner
+	}
+
+	// Order rules: when the request moves the start date, every merged date
+	// (supplied value, else stored) must stay on or after it. Otherwise only
+	// the dates the request supplies are checked, against the stored start, so
+	// stored data that already violates the order never blocks an unrelated edit.
+	dates, _ := ParseOnboardingDates(req) // validated by UpdateProject
+	if dates.Start != nil {
+		merged := OnboardingDates{
+			Start: dates.Start, GoLivePlan: firstDate(dates.GoLivePlan, stored.GoLivePlan),
+			GoLive: firstDate(dates.GoLive, stored.GoLive), Expiry: firstDate(dates.Expiry, stored.Expiry),
+		}
+		if err := merged.checkOrder(merged.Start); err != nil {
+			return domain.ProjectUpdateResult{}, err
+		}
+	} else if err := dates.checkOrder(stored.Start); err != nil {
+		return domain.ProjectUpdateResult{}, err
+	}
+
 	// project.updated_on/updated_by is bumped on every successful call, even one
 	// that only touches the linked account below.
 	var res domain.ProjectUpdateResult
@@ -675,12 +740,20 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 		    compliance_violation_closure_state = COALESCE($4::compliance_violation_closure_state_enum, compliance_violation_closure_state),
 		    verification_enabled = COALESCE($6::boolean, verification_enabled),
 		    suspension_process_state = COALESCE($7::jsonb, suspension_process_state),
+		    onboarding_status = COALESCE($8::text::onboarding_status_enum, onboarding_status),
+		    onboarding_owner_id = COALESCE($9::uuid, onboarding_owner_id),
+		    onboarding_start_date = COALESCE($10::date, onboarding_start_date),
+		    onboarding_go_live_plan_date = COALESCE($11::date, onboarding_go_live_plan_date),
+		    onboarding_go_live_date = COALESCE($12::date, onboarding_go_live_date),
+		    onboarding_expiry_date = COALESCE($13::date, onboarding_expiry_date),
 		    updated_on = NOW(),
 		    updated_by = $5
 		WHERE id = $1
 		RETURNING id, updated_on, updated_by, verification_enabled`,
 		id, closureEnumLabel(req.EndDateClosureState), closureEnumLabel(req.InvoiceDueDateClosureState),
 		closureEnumLabel(req.ComplianceViolationClosureState), updatedBy, req.VerificationEnabled, suspensionStateArg(req.SuspensionProcessState),
+		onboardingStatus, onboardingOwner,
+		dates.Start, dates.GoLivePlan, dates.GoLive, dates.Expiry,
 	).Scan(&res.ID, &res.UpdatedOn, &res.UpdatedBy, &res.VerificationEnabled)
 	if err != nil {
 		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "22P02" {
@@ -719,6 +792,19 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 	if err != nil {
 		return domain.ProjectUpdateResult{}, fmt.Errorf("update project: read closure states: %w", err)
 	}
+
+	var ownerID, ownerName, ownerEmail *string
+	err = tx.QueryRow(ctx, `
+		SELECT INITCAP(REPLACE(p.onboarding_status::TEXT, '_', '-')),
+		       onb.id::TEXT, COALESCE(onb.name, NULLIF(TRIM(CONCAT_WS(' ', onb.first_name, onb.last_name)), '')), onb.email,
+		       p.onboarding_start_date, p.onboarding_go_live_plan_date, p.onboarding_go_live_date, p.onboarding_expiry_date
+		FROM project p LEFT JOIN "user" onb ON onb.id = p.onboarding_owner_id
+		WHERE p.id = $1`, id).Scan(&res.OnboardingStatus, &ownerID, &ownerName, &ownerEmail,
+		&res.OnboardingStartDate, &res.GoLivePlanDate, &res.GoLiveDate, &res.OnboardingExpiryDate)
+	if err != nil {
+		return domain.ProjectUpdateResult{}, fmt.Errorf("update project: read onboarding: %w", err)
+	}
+	res.OnboardingOwner = onboardingOwnerRef(ownerID, ownerName, ownerEmail)
 
 	if req.HasAgent != nil || req.HasKbReferences != nil {
 		// RowsAffected is checked, not just the error, because the account
@@ -917,6 +1003,13 @@ func (r *projectRepo) GetProjectConsumptionStatus(ctx context.Context, id string
 }
 
 // UpdateProjectConsumption implements ProjectRepository.
+//
+// consumption_tracking_file_generated_on records when the licence secrets were
+// generated, which ServiceNow stamped on its status-5 update. It is set when the
+// update leaves the project reading as status 5 and either it did not read as 5
+// before (the completion itself, also a status-4 update that carries the key) or the
+// update changes a stored secret (a regeneration). A replayed request, a repeated
+// status 5 without secrets and a legacy completed row with no date leave it alone.
 func (r *projectRepo) UpdateProjectConsumption(ctx context.Context, id string, req domain.ProjectConsumptionUpdateRequest, updatedBy string) error {
 	ctx = WithSystemIdentity(ctx)
 	statusEnum := consumptionStatusToEnum(req.Status)
@@ -930,6 +1023,20 @@ func (r *projectRepo) UpdateProjectConsumption(ctx context.Context, id string, r
 		    product_consumption_primary_secret_key = COALESCE($6, product_consumption_primary_secret_key),
 		    product_consumption_secondary_secret_key = COALESCE($7, product_consumption_secondary_secret_key),
 		    product_consumption_license_secrets = COALESCE($8, product_consumption_license_secrets),
+		    consumption_tracking_file_generated_on = CASE
+		        -- After the update the project reads as status 5 (see consumptionEnumToStatus) ...
+		        WHEN (COALESCE($3::choreo_application_status_enum, choreo_application_status) = 'COMPLETED'
+		              OR (COALESCE($3::choreo_application_status_enum, choreo_application_status) = 'GENERATED_CREDENTIALS'
+		                  AND COALESCE($6, product_consumption_primary_secret_key, '') <> ''))
+		         -- ... and either it did not before, or this update changes a secret.
+		         AND (NOT (choreo_application_status IS NOT DISTINCT FROM 'COMPLETED'
+		                   OR (choreo_application_status IS NOT DISTINCT FROM 'GENERATED_CREDENTIALS'
+		                       AND COALESCE(product_consumption_primary_secret_key, '') <> ''))
+		              OR (NULLIF($6, '') IS NOT NULL AND $6 IS DISTINCT FROM product_consumption_primary_secret_key)
+		              OR (NULLIF($7, '') IS NOT NULL AND $7 IS DISTINCT FROM product_consumption_secondary_secret_key)
+		              OR (NULLIF($8, '') IS NOT NULL AND $8 IS DISTINCT FROM product_consumption_license_secrets))
+		        THEN NOW()
+		        ELSE consumption_tracking_file_generated_on END,
 		    updated_on = NOW(),
 		    updated_by = $9
 		WHERE id = $1`,

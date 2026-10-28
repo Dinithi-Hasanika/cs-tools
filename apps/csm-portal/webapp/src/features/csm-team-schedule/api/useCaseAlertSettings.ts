@@ -72,6 +72,9 @@ export function useCaseAlertSettings(): UseQueryResult<CaseAlertSettings, Error>
 export interface SaveRoomInput {
   ladder: CaseAlertRoomLadder;
   teamKey?: string;
+  /** An SRE assignment group's own room (routeOptions.assignmentGroups):
+   *  only its URL, no team, teamless flag or channel. */
+  groupId?: string;
   label: string;
   enabled?: boolean;
   teamless?: boolean;
@@ -82,6 +85,8 @@ export interface SaveRoomInput {
 export interface SaveRouteInput {
   ladder: CaseAlertLadder;
   groupName: string;
+  /** An assignment group picked from routeOptions.assignmentGroups. */
+  groupId?: string;
   teamKey?: string;
   rotaCode?: string;
   enabled?: boolean;

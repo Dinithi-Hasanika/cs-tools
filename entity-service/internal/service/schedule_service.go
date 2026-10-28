@@ -43,6 +43,7 @@ type ScheduleService interface {
 	Catalogue(ctx context.Context) (domain.ScheduleCatalogue, error)
 	SearchAssignments(ctx context.Context, req domain.SearchScheduleAssignmentsRequest) (domain.ScheduleAssignmentsResponse, error)
 	SearchAbsences(ctx context.Context, req domain.SearchScheduleAbsencesRequest) (domain.ScheduleAbsencesResponse, error)
+	SearchEngagementAllocations(ctx context.Context, req domain.SearchScheduleEngagementAllocationsRequest) (domain.ScheduleEngagementAllocationsResponse, error)
 	OnDuty(ctx context.Context, at *time.Time, includeOnLeave bool) (domain.ScheduleAssignmentsResponse, error)
 
 	// The lead edit path. Each checks that the caller leads the team the slot
@@ -73,6 +74,8 @@ type ScheduleService interface {
 	CreateAbsenceKind(ctx context.Context, req domain.CreateScheduleAbsenceKindRequest) (domain.ScheduleAbsenceKind, error)
 	// DeleteAbsenceKind removes a kind a lead added, once nothing uses it.
 	DeleteAbsenceKind(ctx context.Context, code string) error
+	// ImportRota writes a whole rota for a period from one import file, all or nothing; dryRun reports without writing.
+	ImportRota(ctx context.Context, rotaCode string, req domain.ImportRotaRequest, dryRun bool) (domain.ImportRotaResponse, error)
 }
 
 type scheduleService struct {
@@ -249,7 +252,7 @@ func (s *scheduleService) requireRotaWriter(ctx context.Context, teamKey string)
 	}
 	if !ok {
 		return &apierror.ForbiddenError{
-			Msg: fmt.Sprintf("changing %s's rota needs a lead of that team, its rota marker, or a rota admin for its family", teamKey),
+			Msg: fmt.Sprintf("changing %s's rota needs a lead of that team, its rota manager, or a rota admin for its family", teamKey),
 		}
 	}
 	return nil

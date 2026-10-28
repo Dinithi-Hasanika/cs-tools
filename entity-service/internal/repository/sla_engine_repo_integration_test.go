@@ -487,3 +487,245 @@ func TestSLAEngineIntegration_SetPausedPausesBreachedClock(t *testing.T) {
 		t.Errorf("stage = %q, want PAUSED", stage)
 	}
 }
+
+// TestSLAEngineIntegration_SetPausedFreezesElapsedTime is the regression
+// test for a real, reported bug: pausing a clock used to leave
+// business_elapsed_percentage/business_duration/remaining_business_duration
+// completely untouched -- see SetPaused's own doc comment -- so a case
+// detail's SLA tab showed "0 Minutes elapsed"/the full target duration
+// still "remaining" for a clock that had genuinely been running for a
+// while before it paused. SetPaused must freeze the clock's REAL elapsed
+// time at the instant it pauses, and that frozen snapshot must stay
+// identical across a duplicate/idempotent pause call (a redelivered
+// case.status_changed event), never advancing as if the clock kept
+// accumulating elapsed time while paused.
+func TestSLAEngineIntegration_SetPausedFreezesElapsedTime(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedSLAEngineWorkItem(t, pool)
+	ctx := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	repo := repository.NewSLAEngineRepository(scoped)
+
+	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
+	if err != nil {
+		t.Fatalf("FindPolicyByName(workaround): %v", err)
+	}
+	if _, err := repo.RegisterClock(ctx, slaEngineIntegrationWorkItemID, policy); err != nil {
+		t.Fatalf("RegisterClock setup: %v", err)
+	}
+	elapsedBeforePause := 20 * time.Minute
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET start_on = NOW() - $2::interval WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(elapsedBeforePause)); err != nil {
+		t.Fatalf("push start_on back: %v", err)
+	}
+
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", true); err != nil {
+		t.Fatalf("SetPaused(true): %v", err)
+	}
+
+	var percent, remainingSeconds, elapsedSeconds float64
+	if err := scoped.QueryRow(ctx, `SELECT business_elapsed_percentage,
+		EXTRACT(EPOCH FROM business_duration), EXTRACT(EPOCH FROM remaining_business_duration)
+		FROM sla WHERE work_item_id = $1::uuid`, slaEngineIntegrationWorkItemID).
+		Scan(&percent, &elapsedSeconds, &remainingSeconds); err != nil {
+		t.Fatalf("scan after first pause: %v", err)
+	}
+	wantElapsed := elapsedBeforePause.Seconds()
+	wantRemaining := (policy.Duration - elapsedBeforePause).Seconds()
+	wantPercent := wantElapsed / policy.Duration.Seconds() * 100
+	const tolerance = 2.0 // seconds of wall-clock slack between the UPDATE above and SetPaused's own NOW()
+	if diff := elapsedSeconds - wantElapsed; diff < -tolerance || diff > tolerance {
+		t.Errorf("business_duration = %vs, want ~%vs (the real elapsed time up to the pause)", elapsedSeconds, wantElapsed)
+	}
+	if diff := remainingSeconds - wantRemaining; diff < -tolerance || diff > tolerance {
+		t.Errorf("remaining_business_duration = %vs, want ~%vs, not the full duration (%vs)", remainingSeconds, wantRemaining, policy.Duration.Seconds())
+	}
+	if diff := percent - wantPercent; diff < -0.2 || diff > 0.2 {
+		t.Errorf("business_elapsed_percentage = %v, want ~%v, not 0", percent, wantPercent)
+	}
+
+	// Simulate real wall-clock time passing while the clock stays paused --
+	// if SetPaused recomputed from a bare NOW() instead of the clock's own
+	// already-set paused_on, a redelivered pause event here would wrongly
+	// advance the frozen snapshot as though the clock kept running. Both
+	// start_on AND paused_on move back by the same amount (a CodeRabbit
+	// catch on the first version of this test, which moved only start_on --
+	// that shifts paused_on - start_on itself, so even the CORRECT
+	// paused_on-anchored formula would show 10 more minutes elapsed, not an
+	// unchanged snapshot; moving both keeps that difference fixed, so only a
+	// bare-NOW()-based bug would show any drift here).
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET start_on = start_on - INTERVAL '10 minutes',
+		                paused_on = paused_on - INTERVAL '10 minutes'
+		  WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID); err != nil {
+		t.Fatalf("push start_on/paused_on back further: %v", err)
+	}
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", true); err != nil {
+		t.Fatalf("SetPaused(true) (duplicate/idempotent): %v", err)
+	}
+
+	var percentAfterDuplicate, elapsedAfterDuplicate float64
+	if err := scoped.QueryRow(ctx, `SELECT business_elapsed_percentage, EXTRACT(EPOCH FROM business_duration)
+		FROM sla WHERE work_item_id = $1::uuid`, slaEngineIntegrationWorkItemID).
+		Scan(&percentAfterDuplicate, &elapsedAfterDuplicate); err != nil {
+		t.Fatalf("scan after duplicate pause: %v", err)
+	}
+	if diff := elapsedAfterDuplicate - elapsedSeconds; diff < -tolerance || diff > tolerance {
+		t.Errorf("business_duration after a duplicate pause call = %vs, want it unchanged at ~%vs -- a redelivered pause event must not advance the frozen snapshot", elapsedAfterDuplicate, elapsedSeconds)
+	}
+	if diff := percentAfterDuplicate - percent; diff < -0.2 || diff > 0.2 {
+		t.Errorf("business_elapsed_percentage after a duplicate pause call = %v, want it unchanged at ~%v", percentAfterDuplicate, percent)
+	}
+}
+
+// TestSLAEngineIntegration_CompleteClockSubtractsPauseDuration is the
+// regression test for a real, reported bug: CompleteClock used a bare
+// "NOW() - start_on" with no account at all for s.pause_duration, so a
+// clock paused for a real stretch of time and then resumed and completed
+// had its final business_duration/business_elapsed_percentage count that
+// entire pause as elapsed working time. A clock paused for roughly an hour
+// mid-way through, then resumed and immediately completed, must show the
+// SAME elapsed time it had right before the pause (the pause contributed
+// nothing), not elapsed-before-pause plus the pause length.
+func TestSLAEngineIntegration_CompleteClockSubtractsPauseDuration(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedSLAEngineWorkItem(t, pool)
+	ctx := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	repo := repository.NewSLAEngineRepository(scoped)
+
+	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
+	if err != nil {
+		t.Fatalf("FindPolicyByName(workaround): %v", err)
+	}
+	if _, err := repo.RegisterClock(ctx, slaEngineIntegrationWorkItemID, policy); err != nil {
+		t.Fatalf("RegisterClock setup: %v", err)
+	}
+	elapsedBeforePause := 10 * time.Minute
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET start_on = NOW() - $2::interval WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(elapsedBeforePause)); err != nil {
+		t.Fatalf("push start_on back: %v", err)
+	}
+
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", true); err != nil {
+		t.Fatalf("SetPaused(true): %v", err)
+	}
+	// Simulate the pause having lasted roughly an hour, without a real
+	// sleep: push BOTH start_on and paused_on back by that much, together --
+	// pushing paused_on back alone (an earlier version of this test, caught
+	// failing against a real database) makes the resume below accumulate a
+	// full hour of pause_duration while the clock's total real lifespan
+	// (NOW() - start_on) is still only ~10 minutes, an internally
+	// inconsistent timeline no real clock could ever have (the formula then
+	// correctly reports a negative elapsed time for an impossible clock --
+	// that's the formula working, not a bug). Shifting start_on by the same
+	// amount keeps paused_on - start_on fixed at elapsedBeforePause (the
+	// real invariant this test cares about) while making the clock's total
+	// lifespan long enough to have genuinely contained an hour-long pause.
+	pauseLength := time.Hour
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET start_on = start_on - $2::interval, paused_on = paused_on - $2::interval
+		  WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(pauseLength)); err != nil {
+		t.Fatalf("push start_on/paused_on back: %v", err)
+	}
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", false); err != nil {
+		t.Fatalf("SetPaused(false) (resume): %v", err)
+	}
+
+	completed, err := repo.CompleteClock(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND")
+	if err != nil {
+		t.Fatalf("CompleteClock: %v", err)
+	}
+	if !completed {
+		t.Fatal("CompleteClock reported no row updated")
+	}
+
+	var percent, elapsedSeconds, pauseDurationSeconds float64
+	if err := scoped.QueryRow(ctx, `SELECT business_elapsed_percentage,
+		EXTRACT(EPOCH FROM business_duration), EXTRACT(EPOCH FROM pause_duration)
+		FROM sla WHERE work_item_id = $1::uuid`, slaEngineIntegrationWorkItemID).
+		Scan(&percent, &elapsedSeconds, &pauseDurationSeconds); err != nil {
+		t.Fatalf("scan after complete: %v", err)
+	}
+
+	if diff := pauseDurationSeconds - pauseLength.Seconds(); diff < -2 || diff > 2 {
+		t.Fatalf("pause_duration = %vs, want ~%vs -- the resume above should have accumulated it", pauseDurationSeconds, pauseLength.Seconds())
+	}
+
+	wantElapsed := elapsedBeforePause.Seconds()
+	const tolerance = 2.0
+	if diff := elapsedSeconds - wantElapsed; diff < -tolerance || diff > tolerance {
+		t.Errorf("business_duration at completion = %vs, want ~%vs (elapsed-before-pause only -- the hour spent paused must not count)", elapsedSeconds, wantElapsed)
+	}
+	wantPercent := wantElapsed / policy.Duration.Seconds() * 100
+	if diff := percent - wantPercent; diff < -0.5 || diff > 0.5 {
+		t.Errorf("business_elapsed_percentage at completion = %v, want ~%v", percent, wantPercent)
+	}
+}
+
+// TestSLAEngineIntegration_CompleteClockFinalizesAnOpenPause is the
+// regression test for completing a clock that is still marked paused
+// (paused_on IS NOT NULL) -- the real path is ApplyStateEffects' CLOSED
+// branch always resuming a clock before completing it, but a resume that
+// fails is logged and ignored, so CompleteClock must tolerate reaching a
+// still-paused row directly. Before this fix, business_duration/percentage
+// were computed correctly (the completedElapsedExpr already excludes an
+// open pause segment) but paused_on was left set and the open segment was
+// never folded into pause_duration -- GetClockState would then report a
+// finished (ACHIEVED) clock as still paused, with an incomplete total.
+func TestSLAEngineIntegration_CompleteClockFinalizesAnOpenPause(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedSLAEngineWorkItem(t, pool)
+	ctx := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	repo := repository.NewSLAEngineRepository(scoped)
+
+	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
+	if err != nil {
+		t.Fatalf("FindPolicyByName(workaround): %v", err)
+	}
+	if _, err := repo.RegisterClock(ctx, slaEngineIntegrationWorkItemID, policy); err != nil {
+		t.Fatalf("RegisterClock setup: %v", err)
+	}
+
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", true); err != nil {
+		t.Fatalf("SetPaused(true): %v", err)
+	}
+	openPause := 15 * time.Minute
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET paused_on = paused_on - $2::interval WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(openPause)); err != nil {
+		t.Fatalf("push paused_on back: %v", err)
+	}
+
+	// No resume here -- CompleteClock must be called directly on a row
+	// that is still paused.
+	completed, err := repo.CompleteClock(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND")
+	if err != nil {
+		t.Fatalf("CompleteClock: %v", err)
+	}
+	if !completed {
+		t.Fatal("CompleteClock reported no row updated")
+	}
+
+	var pausedOn *time.Time
+	var pauseDurationSeconds float64
+	if err := scoped.QueryRow(ctx,
+		`SELECT paused_on, EXTRACT(EPOCH FROM COALESCE(pause_duration, INTERVAL '0'))
+		 FROM sla WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID).
+		Scan(&pausedOn, &pauseDurationSeconds); err != nil {
+		t.Fatalf("scan after complete: %v", err)
+	}
+
+	if pausedOn != nil {
+		t.Errorf("paused_on = %v, want nil -- completing a paused clock must clear it", pausedOn)
+	}
+	if diff := pauseDurationSeconds - openPause.Seconds(); diff < -2 || diff > 2 {
+		t.Errorf("pause_duration = %vs, want ~%vs -- the still-open segment must be folded in", pauseDurationSeconds, openPause.Seconds())
+	}
+}

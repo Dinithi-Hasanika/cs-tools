@@ -74,13 +74,24 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `CSM_MIGRATION_SALESFORCE_PARTNER_INGEST_ENABLED` | no | `false` | Must be `"true"` for the partner-link refresh (`account_relationship` "Is Partner Of" / "Is Customer Of") to run after Account events and partner-contact membership events, and for `POST /salesforce/accounts/{sfId}/refresh-partners` to be registered (see "Salesforce partner relationships" below). Keep it off while csm-sync-service still copies `account_relationship` from ServiceNow |
 | `SALESFORCE_INGEST_RETRY_INTERVAL` | no | `5m` | How often the Salesforce ingest retry worker re-runs memberships whose DATABASE step FAILED because their project or account was not in CSM yet, and how old such a failure must be before it is re-run (see "Salesforce ingest ledger and the delayed-retry job" below). `0` disables the job, and so does an unparseable or negative value (logged as a warning; it fails closed rather than falling back to `5m`). Only runs when `CSM_MIGRATION_SALESFORCE_MEMBERSHIP_INGEST_ENABLED=true` |
 | `CSM_MIGRATION_PORTAL_WRITES_ENABLED` | no | `false` | Must be `"true"` to register the four portal-driven membership write routes under `/projects/{id}/contacts` (see "Portal-driven membership writes" below). Also needs `DATA_SOURCE=postgres`, a pool, and the full `SALES_ENTITY_*` set (`Config.HasPortalMembershipWrites`). Off means the routes are **not registered at all**, not 403 |
+| `SALESFORCE_DEFERRED_WRITES_ENABLED` | no | `false` | Must be `"true"` to let a portal invitation survive a sales-entity-service outage: the rows commit with NULL `sf_id`, a `salesforce_write_request` row is recorded, and `salesforce.membership_write.requested` is published for this service's own consumer to finish (see "Deferred Salesforce writes" under "Portal-driven membership writes"). Also needs `HasPortalMembershipWrites` and `EVENT_HUB_BROKER` + `EVENT_PUBLISHING_ENABLED=true`; without them it is logged and stays off. Off = an outage fails the invitation with 503 as before |
+| `SALESFORCE_WRITE_EVENT_HUB_TOPIC` | no | `salesforce-writes` | Topic the deferred-write **commands** are published to, consumed by sales-entity-service (digiops-sales, `membershipwrite`). The Event Hub must exist or every deferred invitation's publish fails (recorded in `event_publish_failures`, the request stays unpublished) |
+| `SALESFORCE_WRITE_RESULTS_TOPIC` / `SALESFORCE_WRITE_RESULTS_DLQ_TOPIC` | no | `salesforce-write-results` / `…-dlq` | Topics sales-entity-service **answers** on (`salesforce.membership_write.completed` / `.failed`) and this service's dead-letter copy of them. Both must exist |
+| `SALESFORCE_WRITE_RESULTS_CONSUMER_GROUP` / `…_DLQ_CONSUMER_GROUP` | no | `entity-service-salesforce-write-results` / `…-dlq` | This service's consumer groups on the two results topics. Never shared with another component |
+| `SALESFORCE_WRITE_RESULTS_RETRY_ATTEMPTS` / `…_RETRY_DELAY` | no | `3` / `2s` | Main results tier: attempts and fixed pause, then dead-letter. A result's handling waits on Sales Entity's REST reads and this database only; the **Salesforce** retry policy lives in sales-entity-service |
+| `SALESFORCE_WRITE_RESULTS_DLQ_RETRY_ATTEMPTS` / `…_DLQ_RETRY_DELAY` / `…_DLQ_RETRY_MAX_DELAY` | no | `10` / `30s` / `15m` | Dead-letter results tier: exponential, capped. On its last attempt the request is marked FAILED naming the Salesforce ids it could not stamp (the Salesforce echo still stamps them) |
 | `CSM_MIGRATION_CUSTOMER_ENGAGEMENT_INGEST_ENABLED` | no | `false` | Registers `POST /customer-engagements/allocation-events` (Postgres-authoritative only); see "Allocation events" below |
 | `CUSTOMER_ENGAGEMENT_FIREFIGHTING_TYPE_ID` | no | — | ServiceNow sys_id written as `engagement_type_id` on firefighting engagements created by allocation events. Unset skips creating them |
 | `REDIS_URL` | no | — | `rediss://:<key>@<host>:<port>` (TLS, Azure Managed Redis); wins over `REDIS_ADDR`. Turns on the user cache (see "User cache (Redis)" below). `Validate` requires a `redis`/`rediss` scheme and a host, and never echoes the URL |
 | `REDIS_ADDR` / `REDIS_PASSWORD` | no | — | Plain, non-TLS Redis for local runs. Either this or `REDIS_URL` makes `Config.HasRedis` true |
 | `USER_CACHE_TTL` | no | `10m` | Backstop lifetime of a cached user; an unparseable or non-positive value falls back to `10m` |
+| `PRODUCT_VULNERABILITY_META_CACHE_TTL` | no | `24h` | Backstop lifetime of the cached product/version options of `GET /products/vulnerabilities/meta`; deleted on a successful vulnerability sync; unparseable or non-positive falls back to `24h` |
+| `INCIDENT_EXTRA_ASSIGNMENT_GROUP_IDS` | no | — | Comma-separated `"group"` UUIDs an incident may be created in although they support no service (e.g. the security operations group). Trimmed, empty entries ignored; a non-UUID entry refuses to start. Joins the incident-assignable set (create check + `supportGroupsOnly` picker); never case-alert route options. See "Incident assignment group on create" |
 | `INCIDENT_DEFAULT_SERVICE_ID` | no | — | UUID of the service whose support group a new incident gets when no `assignmentGroupId` is sent and its own service has no support group (logged WARN each time). Unset / missing / groupless: such incidents are created unassigned (logged ERROR). A non-UUID refuses to start; checked at startup, log only. See "Incident assignment group on create" |
 | `CR_STRICT_VISIBILITY_FROM` | no | — | RFC 3339 instant **with a zone**: change requests created at or after it are visible to a customer only when designated to them; earlier ones are "legacy" and keep today's visibility. Unset/empty = no cutover, every change request is legacy (the safe default and the rollback; a WARN is logged at startup). An unparsable value refuses to start. Set once per environment at release and never move it — see "Customer visibility and the cutover" |
+| `MIGRATION_CASE_REPORT_HOLD_TAG` | no | `s_mig_hold` | Tag (ignoring case) for the weekly migration scan's "customer requested to hold" table |
+| `MIGRATION_CASE_REPORT_ACCOUNTS_TAG` | no | `s_acc` | Tag (ignoring case) for its "waiting on accounts team" table |
+| `MIGRATION_CASE_REPORT_TEAM_KEYS` | no | none | Team keys whose `group_email` the scan returns as recipients |
 
 \* `DB_USER`/`DB_PASSWORD`/`DB_NAME` are required when `DATA_SOURCE=postgres`
 and **optional** when `DATA_SOURCE=servicenow`, where entity reads and writes
@@ -844,7 +855,49 @@ ignored). Code: `internal/service/salesforce_project_ingest.go` (`WithProjectIng
 - **Update-only by default:** with `CSM_MIGRATION_SALESFORCE_PROJECT_INSERT_ENABLED` off a
   project CSM does not have is `NotFoundError` "project not found for sfId ..." plus a FAILED
   ledger row, which the delayed-retry job re-runs. On, it is inserted with
-  `gen_random_uuid()` and `is_active = TRUE`.
+  `is_active = TRUE` and an id chosen as in the next bullet.
+- **Insert id (datasource switch):** the row id is `gen_random_uuid()` in plain
+  `DATA_SOURCE=postgres` (no lookup, nothing else changes). Under
+  `DATA_SOURCE=postgres-servicenow-dual-write`, where the backing system keeps its own copy
+  of every project (fed by another subscriber), a project that has to be INSERTED takes the
+  id that system already uses, so ids converge and a later backing-system-first write that
+  addresses the project by id lands on a real record. The datasource is the only switch (no
+  env var). Mechanics:
+  - `ProjectIngest.IDResolver` (`service.ProjectIDResolver`, nil unless dual-write; `routes.go`
+    builds it and panics if dual-write has no integration client, since a nil resolver would
+    silently insert random ids). The adapter is `internal/service/sn_project_id_resolver.go`
+    (`POST /projects/search` with `filters.searchQuery = key`, id = `sysidToUUID(sys_id)`);
+    the ingest sees only the generic interface.
+  - **Pre-check, no transaction open:** before the upsert, `ProjectExists(sf_id, key)` (the
+    same two arms the write resolves by). Only when neither row exists is the resolver
+    called, so updates, replays and duplicates make no call. The id goes in
+    `SalesforceProjectUpsert.InsertID`; the write still takes the `"project-sf:"+sfId`
+    advisory lock and re-resolves, so two concurrent events for one project cannot make two
+    rows: the loser finds the winner's row and updates it (its `InsertID` is ignored).
+  - **Miss:** the backing system has no such key (or the lookup identity cannot see it):
+    `NotFoundError` "project not found in the backing system for key ... yet", FAILED ledger
+    row, so `IsMissingParentError` matches and the retry worker re-runs it (12 attempts, 5m
+    ticks by default). `RequireInsertID` makes the write refuse an insert without an id too:
+    in this mode a random id is never used. A lookup error (backing system down, malformed
+    id, ambiguity) is not a "project not found" and is not retried by the worker; it is
+    redelivered by the bus and visible as FAILED.
+  - **Exact key match:** the endpoint's `searchQuery` is a substring match on name and key,
+    so results are filtered in Go to `TrimSpace(key) ==` the Salesforce key,
+    case-sensitive (as `project.key = $2` is). A key that differs only in case is a miss
+    (logged), not a match. Up to 10 pages of 50 are scanned; more candidates is an error.
+    Two distinct ids for one key is a `ConflictError`: nothing is guessed or written.
+  - **Derived-id collision:** if a row already holds the derived id but matched neither the
+    sf_id nor the key, it is never overwritten: the write returns a `ConflictError` naming
+    both keys, inserts nothing and writes no ledger row in that transaction (the service
+    records FAILED). Not retried by the worker; it needs a person.
+  - **Lookup identity:** the ingest has no end-user token, so the call carries only the
+    service bearer and the integration service uses its own service identity, which must see
+    every project (the endpoint restricts a non-privileged caller to its own projects, so an
+    under-privileged identity looks like a permanent miss). The endpoint also only returns
+    projects with a key, a Salesforce id and a type recorded, so a project the backing system
+    has not fully populated yet is a miss until it is.
+  - **Cutover:** switching `DATA_SOURCE` away from dual-write (to plain `postgres`) removes
+    the resolver: new projects then get random ids and no backing-system call is made.
 - **Empty `Project_Key__c` (decision D5):** refused: FAILED ledger row with the reason,
   event acknowledged (no retry can fix it).
 - **DELETED:** `is_active = FALSE` on every row with the (18-character) `sf_id` plus a DELETED
@@ -1228,6 +1281,26 @@ revisited.
   (`incidentPriorityFor`), the optional fields it sets (subcategory,
   assigned engineer, `cmdb_ci_id`, watch list), and `additionalComments` /
   `workNotes` as COMMENT / WORK_NOTE rows, all in one transaction.
+- **`incidentService.createIncidentSNFirst`** (dual-write, ServiceNow writes on)
+  writes the same fields to Postgres as the plain create
+  (`CreateIncidentFromServiceNow`): assignment group, assigned engineer,
+  subcategory, `cmdb_ci_id`, the watch list and the journal rows. The CSM
+  database is the record of truth, so nothing is left for a later sync to fill
+  in. `configurationItemId` is accepted on this path; it used to be a 400,
+  because Postgres had no column for it. Before ServiceNow is called,
+  `CheckIncidentFromServiceNow` runs that same insert under a placeholder id and
+  number, in a transaction that is always rolled back. A request Postgres would
+  refuse (an id it does not hold, a subcategory of another category, an unknown
+  watcher) is then refused before anything exists, and never leaves an incident
+  in ServiceNow with no CSM row. Its rules are the insert's own, so the two
+  cannot drift. A watch-list entry is checked for shape before any lookup,
+  with the same wording as `watchListEmails`. An unknown one is named by its
+  position, never its value, because an entry can be a third party's email
+  and `writeServiceError` logs every ValidationError. Tests:
+  - repository: `TestIncidentCreate_FromServiceNowPersistsEveryField`,
+    `TestIncidentCreate_CheckFromServiceNow`;
+  - service: `TestIncidentService_CreateIncident_ChecksPostgresBeforeServiceNow`,
+    `..._StoresEveryFieldInPostgres`.
 - **`snCaseService.CreateCaseComment`** publishes `case.comment_added` via
   `publishCommentAdded`, called after the SN comment-create call succeeds.
   Enriches via `GetCaseByID` for `ProjectID`/`CaseTitle`/`Recipients`, the
@@ -1576,13 +1649,24 @@ gap ("with servicenow data source all are shown").
   `case.status_changed`'s sake) is now unconditional whenever `req.State` or
   `req.WorkState` is set, since the activity write needs the prior value
   regardless of whether Event Hub is configured at all.
-- **Deliberately out of scope**: `updateCaseFields`'s combinable "plain
-  field" bundle (Subject/Description/DeploymentID/DeployedProductID/fix-ETAs/
-  RelatedCaseID/WorkaroundProvided) does not write to `work_item_activity`
-  yet — up to nine fields in one call, several without a cheaply-available
-  "old" value, is a larger and more speculative addition than the six
-  branches above; left for a future change if it turns out to matter in
-  practice the same way assign/state did.
+- **Workaround and update released**: `updateCaseFields` logs
+  `workaround_provided_on` (set stores the new timestamp, recall stores the
+  prior timestamp as old and an empty new; a recall of an unset workaround
+  logs nothing). It reads the prior stamp via `GetCaseWorkaroundProvidedOn`
+  (`GetCaseByID` does not populate `WorkaroundProvidedOn` on this data
+  source) only when `WorkaroundProvided` is in the request; a failed read is
+  logged and never fails the update. `updateCaseMarkFixIssued` logs `fix_issued_on` as
+  "Update Released" only when `!alreadySet`. Timestamps are RFC 3339 UTC so
+  the feed renders them as date-times. Fix ETA values are deliberately not
+  logged: they are internal until shared with the customer, and the
+  customer portal can request field-change rows. Both paths resolve the
+  actor with `resolveActorOrM2M`, so a pure M2M caller is attributed to its
+  client id (the same value already stamped on `work_item.updated_by`)
+  instead of being dropped by the blank-email guard; such a row has no
+  matching `"user"` record, so the feed shows the client id and no display
+  name. The rest of the plain-field bundle (Subject/Description/
+  DeploymentID/DeployedProductID/fix ETAs/RelatedCaseID) writes no activity
+  entry.
 
 Every helper above runs **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`
@@ -1814,6 +1898,91 @@ sent. A label Salesforce would reject is a **400 naming it**, not an
 `ignoredRoles` log line: the ingest is right to tolerate an unknown role on a
 record Salesforce already holds (refusing would strip a real membership over a
 vocabulary gap), and wrong to tolerate one a caller is asking us to write.
+
+### Deferred Salesforce writes (`project_membership_deferred_write.go`)
+
+The ordering above makes every invitation fail with 503 while
+sales/sales-entity-service (or Salesforce behind it) is down, and a customer
+admin can do nothing about that. With `SALESFORCE_DEFERRED_WRITES_ENABLED=true`
+a **first invitation** survives the outage; everything else keeps failing fast.
+The Salesforce half then runs in **sales-entity-service** (digiops-sales,
+`membershipwrite` package), the service that owns the Salesforce connection;
+this service keeps the decision, the ledger and both CSM transactions.
+
+1. `Invite` tries Salesforce synchronously as always. Only when the validator
+   or the write fails with `ServiceUnavailableError` (connection error,
+   timeout, 5xx, an answer with no id) **and** the project has no membership
+   for the address yet does it fall through. A validation refusal, a conflict,
+   or a re-invitation of a DEACTIVATED row (which already has Salesforce ids
+   and would be an UPDATE there) is never deferred.
+2. The rows commit with NULL `sf_id` columns (`"user"`, `account_contact`,
+   `project_contact`; the repository never matches or stamps a blank id, and
+   records **no** DATABASE onboarding step, because the ledger is keyed by
+   the membership id) plus a `salesforce_write_request` row (migration 0249:
+   the admin's request as JSON `intent`, status PENDING) in the same
+   transaction. Then `salesforce.membership_write.requested` is published to
+   `SALESFORCE_WRITE_EVENT_HUB_TOPIC`, keyed by the request id, **carrying the
+   whole intent and the project's and account's Salesforce ids** (Sales Entity
+   cannot read this database), and `published_on` is stamped. The caller gets
+   **201** with `salesforceSync: "PENDING"` and empty ids.
+3. sales-entity-service consumes the command on two tiers (its own
+   `SALESFORCE_WRITES_*RETRY*` policies: short fixed, then a dead-letter topic
+   with exponential backoff), performs the write **search-first** (contact by
+   address, membership by project and contact; create on a miss, PATCH state
+   and roles otherwise) so a redelivery adopts rather than duplicates, and
+   publishes `salesforce.membership_write.completed` (both ids, the stored
+   state and roles) or `.failed` (`terminal: true` for a Salesforce refusal,
+   `false` when its retries ran out) to `SALESFORCE_WRITE_RESULTS_TOPIC`.
+   Before writing it runs the invitation checks the validator could not run
+   during the outage, from the command's `allowedAccountSfIds` (the project's
+   account and its partners, read here at deferral time) and `inviterEmail`:
+   at most one contact per address, the inviter on an allowed account, no
+   take-over of another account's live membership, the address's domain in
+   the base account's or a partner's domain list, and adoption of an existing
+   contact only from an allowed account. A refusal is a terminal `.failed`.
+4. `startSalesforceWriteResultConsumers` (`internal/server/salesforce_write_consumer.go`)
+   consumes the results. `CompleteDeferredSalesforceWrite` re-reads the
+   request (settled → acknowledge; this is what makes a duplicate result
+   harmless), reads the records back through Sales Entity's REST API
+   (`GetProjectContact`, `GetContact`) and maps them with the ingest's
+   `buildMembershipUpsert`, then in **one transaction** upserts the rows with
+   the ids, records the DATABASE step and marks the request SUCCEEDED, and
+   only then publishes `project_contact.invited`. The invitation email and the
+   identity provisioning therefore wait for the Salesforce id; nothing else
+   publishes that event for a deferred row (the Salesforce echo stays silent
+   because the row is already INVITED). `FailDeferredSalesforceWrite` marks
+   the request **FAILED** with Sales Entity's reason.
+5. A result whose handling cannot finish (Sales Entity REST or the database
+   unavailable) is retried per the results policies; on the dead-letter
+   tier's last call the request is marked FAILED naming the Salesforce ids it
+   could not stamp, so it never sits PENDING with nothing behind it. A
+   terminal problem (the row is gone, the records do not add up) is FAILED at
+   once.
+6. While a request is PENDING, `UpdateRoles`, `Deactivate` and
+   `ResendInvitation` answer **409** with code `salesforce_sync_pending`
+   ("still being synced to Salesforce"). Once it is FAILED, or was never
+   published, `UpdateRoles` and `ResendInvitation` answer **409**
+   `salesforce_sync_failed` and `Deactivate` runs **locally** (no Salesforce
+   half to undo), closing the request as CANCELLED so nothing picks it up. A
+   row with no id and no request keeps the generic missing-id refusal.
+   `salesforce_write_request.retryable` tells a FAILED row's two causes apart
+   (retries exhausted vs. refused). A PENDING request that was never
+   published (the command publish failed) reads as FAILED everywhere -- the
+   contact lists, the refusals and the local removal -- since nothing will
+   consume it without a re-publish. The contact reads
+   (`POST /projects/{id}/contacts/search`, `GET …/{contactId}`) carry
+   `salesforceSync: PENDING | FAILED` from the latest request row, read
+   best-effort through `WithProjectContactSalesforceSync`.
+
+What the event path does **not** cover: a command or result that is never
+delivered (the row stays PENDING, `published_on` says whether the command
+left at all), and an outage that outlives Sales Entity's retries (the row
+says FAILED). Both need a re-publish — a sweep or a manual retry — which is
+deliberately not part of this change. `membership_registration_service.go`
+already skips rows with a blank `sf_id`, so a person who signs in before the
+sync lands is registered on a later login. The local stack exercises the
+whole loop with `scripts/csm-compose/sf-deferred-e2e.sh` and a mock
+sales-entity-service that plays the consumer.
 
 ### The Sales Entity write client (`internal/salesentity/membership_writes.go`)
 
@@ -2250,6 +2419,59 @@ regardless of severity.
   completion actually was. The webapp's `CaseSlaTable` already handles a
   percentage above 100 correctly (clamps the progress-bar fill, shows the
   real number as text), confirmed before uncapping this.
+- **`SetPaused` now accumulates real pause duration, not just a
+  currently-paused flag.** `sla.pause_duration`/`business_pause_duration`
+  (migration 0048) existed from the start for ServiceNow-synced rows but
+  were never written for a `source='CSM'` row — `SetPaused` only ever reset
+  `paused_on` to "now" on pause and cleared it to `NULL` on resume, with no
+  running total anywhere. Fixed: `paused_on` is now only set on the FIRST
+  pause of a run (`COALESCE(paused_on, NOW())` — a duplicate/idempotent
+  pause call, e.g. a redelivered `case.status_changed`, no longer resets it
+  and silently shrinks the apparent pause), and a resume adds the just-ended
+  segment (`NOW() - paused_on`) onto `pause_duration` before clearing
+  `paused_on` — one UPDATE, correct for repeat pauses, repeat resumes, and
+  several pause/resume cycles on the same clock. `business_pause_duration`
+  is deliberately left untouched (still NULL for every `source='CSM'` row):
+  this engine has no business-hours calendar, so there's nothing correct to
+  compute for it (see `RecomputeActive`'s own "flat wall-clock" doc comment
+  below). `sla_live` (migration 0204) now subtracts `pause_duration` from
+  its live elapsed-percentage/business-duration/remaining-duration/
+  has-breached calculations for an `IN_PROGRESS`/`BREACHED` row (migration
+  0245) — a currently-running clock's "live" numbers finally reflect actual
+  working time, not wall-clock time since `start_on` regardless of how long
+  it sat paused. `domain.SLAStatus`/`SLAClockState` both gained
+  `PausedOn`/`PauseDurationSeconds` (whole seconds, same convention as
+  `SLADurationPolicyItem.DurationSeconds`) so a caller can read this
+  directly from `GET /sla-status`/`GET /sla-status/clock-state` instead of
+  re-deriving it — `integrations/csm-notification-service`'s own Redis-based
+  SLA tracker uses exactly this to reschedule a clock's not-yet-alerted
+  tiers forward on resume, and to rebuild an accurate due-date schedule from
+  this durable record if its own Redis is ever wiped (see that repo's own
+  CLAUDE.md, "SLA breach-alerting engine" → "resumeShift"/"Reconcile").
+- **`SetPaused` now also freezes `business_elapsed_percentage`/
+  `business_duration`/`remaining_business_duration` at the instant a clock
+  pauses — the identical gap `CompleteClock`'s own doc comment already
+  describes fixing for completion, just never carried over to pausing.**
+  `sla_live` only computes these three live for an `IN_PROGRESS`/`BREACHED`
+  row; for `PAUSED` it passes the stored columns through unchanged (see that
+  view's own doc comment) — so as long as `SetPaused` left them untouched, a
+  paused clock's case-detail SLA tab/`GET /sla-status` reading fell back to
+  whatever was stored at `RegisterClock` time (effectively 0% elapsed, the
+  full target duration still "remaining"), not the clock's true elapsed time
+  up to the pause. Confirmed live: a workaround/resolution clock paused
+  minutes after a case was created showed "0 Minutes" elapsed and the full
+  policy duration still "left," even though real working time had passed.
+  The freeze point is `COALESCE(paused_on, NOW())` — the same expression
+  `paused_on` itself is set from, not a bare `NOW()` — so a duplicate/
+  idempotent pause call (a redelivered `case.status_changed`) re-derives the
+  identical frozen snapshot instead of silently advancing it as if the clock
+  kept accumulating elapsed time while paused; the elapsed math itself
+  subtracts the pause total already completed before this pause began
+  (`pause_duration`, left unmodified by the pause branch), mirroring
+  `sla_live`'s own live formula just evaluated at the pause instant instead
+  of at read time. Resuming leaves these three columns alone — once the
+  clock goes back to `IN_PROGRESS`, `sla_live` resumes computing them live
+  on every read regardless of whatever stale snapshot is still stored.
 - **A case closing now finalizes all three clock types, not just
   resolution.** `ApplyCaseStateEffects`'s `CaseStateClosed` branch used to
   only resume+complete `resolution` and merely pause `workaround` forever
@@ -2742,15 +2964,21 @@ already use — no route path, request, or response shape changed.
   labels straight from Postgres's own enum catalog
   (`pg_enum`/`ListSeverities`) rather than hardcoding them, so it can never
   drift from the migration that defines the type.
-  `SyncProductVulnerabilities` delegates to ServiceNow when configured
-  (via `NewProductVulnerabilityServiceWithSNSync`), falling back to a
-  `ServiceUnavailableError` when no ServiceNow integration is present:
-  Postgres cannot satisfy its full-replace semantics (delete anything absent
-  from the submitted set, upsert everything present) without a stable external
-  join key with a database-enforced uniqueness guarantee, and
-  `product_vulnerability` has no `UNIQUE` constraint on any column other than
-  its own generated `id`. When `db != nil`, all read queries are served from
-  Postgres regardless of `DATA_SOURCE`.
+  `SyncProductVulnerabilities` follows `DATA_SOURCE` (see
+  `newProductVulnerabilityService` in `internal/server`): `servicenow`
+  delegates everything to the ServiceNow service; `postgres` and
+  `postgres-servicenow-dual-write` write to Postgres only and never call
+  ServiceNow, even when a ServiceNow client exists for SLA/attachment reads.
+  The Postgres sync is a full replace in ONE transaction under an advisory
+  lock (the table has no `UNIQUE` index besides `id`): the item's `wso2Id` is
+  matched to `business_key`, matches are updated, absent keys inserted, and
+  every row whose key is not submitted (or has no key) is deleted. The service
+  rejects an empty list, an empty or duplicate `wso2Id`, over-length fields and
+  an unrecognised severity before touching the database. `scannerName` has no
+  column and is not stored. Because it is destructive, the sync route accepts
+  only callers whose client id is in `M2M_CLIENT_IDS` (403 for any other
+  caller, user tokens included; 401 when unauthenticated); an empty list
+  rejects everyone.
 - **Time cards**: like comments, the Postgres path has no inbound-auth
   layer to forward a caller's identity through, so `CreateTimeCard`/
   `UpdateTimeCard`/`DeleteTimeCard` resolve the caller's user id from
@@ -3517,6 +3745,151 @@ has neither column, so a hold on one is a 400, never a silent no-op.
   `snCaseService` mirror) against a fake ServiceNow server and asserts the PATCH
   it receives: the case's sysid, only `autocloseHoldUntil` as a date, the caller's
   token forwarded.
+
+## Case auto-closure (reminders and automatic closure)
+
+Tickets that sit in **Awaiting Info** or **Solution Proposed** with no activity are reminded twice and
+then closed. This is native to this service (Postgres only): nothing in it reads or writes ServiceNow,
+and it replaces ServiceNow's "Auto Close Resolved Cases" flow rather than mirroring it. It is switched on by the scheduler (`AUTOCLOSURE_ENABLED`); `AUTOCLOSURE_SYSTEM_USER_EMAIL` is **optional**. It needs a Postgres data source (`postgres` or `postgres-servicenow-dual-write`, where the case writes are mirrored to ServiceNow like any other). The two routes are always registered; where the feature cannot run (`DATA_SOURCE=servicenow`) they answer an explicit `503` naming the reason, so an enabled scheduler fails with that sentence in its alert instead of a bare 404. See "Dual-write rollout" below. It is driven
+by `operations/csm-scheduled-tasks`'s `case_autoclosure` task (see that component's CLAUDE.md).
+
+| Env var | Meaning |
+|---|---|
+| `AUTOCLOSURE_SYSTEM_USER_EMAIL` | Optional. The `"user"` row (type `SYSTEM`) the reminder and closure comments are written as and `closed_by` is stamped with. **Empty (the normal case): the workflow acts as the system itself, shown as "System user"**: comments are authored "System user", the activity entry and the Pending Verification card's "Added by" say "System user", and `closed_by_user_id` stays empty (no user row exists to point at) |
+
+**Who is eligible** (one SQL predicate, `autoclosureBaseCTE` + `autoclosureNoOpenChild` in
+`autoclosure_repo.go`, used by both the listing and the per-ticket re-check): a `"case"` (Query and
+Incident are both a `"case"`) or a `security_report_analysis` in `AWAITING_INFO` / `SOLUTION_PROPOSED`,
+with `autoclose_enabled` (migration 0249, default true), **no parent** (a child never has a workflow of
+its own), and **no open child** (case-like children not closed; change-request children not
+closed/canceled/rolled back). Who created the ticket does not matter, only its state. Engagements,
+service requests and announcements take no part.
+
+**The workflow position** is the existing `autoclosure_step` / `autoclosure_state_on` columns
+(migrations 0023/0024; the sync used to fill them, so existing `FIRST_COMMENT` / `SECOND_COMMENT` /
+`ON_HOLD` values simply continue). Stages, each one ticket and one step per run:
+
+| Stage | Due when | Does |
+|---|---|---|
+| `release_hold` | step `ON_HOLD` and the held day is over | step `DEFAULT`, clock = now. Nothing posted |
+| `first_reminder` | step none/`DEFAULT`, interval elapsed since the reference time | comment, step `FIRST_COMMENT`, clock = now |
+| `second_reminder` | step `FIRST_COMMENT`, interval since the clock | comment, step `SECOND_COMMENT`, clock = now |
+| `close` | step `SECOND_COMMENT`, interval since the clock | close, then closure comment |
+
+The interval is **7 calendar days** for each stage (`intervalDays`; the support desk runs 24/7/365, so
+business days are deliberately not modelled).
+
+**First-reminder reference time.** Solution Proposed: the later of `resolved_on` and the activity entry
+for entering the state. Awaiting Info: the later of the last **customer-visible comment by an INTERNAL user**
+(never a work note, never the system user's own reminders, never a customer) and entering the state. A
+ticket whose step is `DEFAULT` also waits the interval from the reset, so a ticket coming back from a hold
+or from the customer gets a fresh clock rather than an instant reminder. Fallback: `work_item.updated_on`.
+
+**Hold** keeps the existing contract (`PATCH autocloseHoldUntil`, "Auto-closure hold" above): step `ON_HOLD`
+with the last protected UTC day in `autoclosure_state_on`. A hold suspends **everything** (no reminders,
+no closure): `ON_HOLD` matches no stage. It ends when that day is over (`state_on + 1 day <= now`); the
+ticket then restarts at `DEFAULT` with a fresh clock, so a ticket that was overdue during the hold is
+**not** reminded the moment the hold ends.
+
+**Reset trigger** (`autoclosure_reset`, migration 0249, `BEFORE UPDATE OF state` on `"case"` and
+`security_report_analysis`): on **any** change of state, a parent ticket restarts the workflow (step `DEFAULT`,
+clock = now) when the new state is `WAITING_ON_WSO2` or `REOPENED`, or is `AWAITING_INFO` / `SOLUTION_PROPOSED`
+(entering a waiting state from anywhere, Work in Progress included, is a new request to the customer and must not
+inherit an old clock). **One exception: a ticket on hold keeps its hold when it enters Awaiting Info or Solution
+Proposed** (the customer asked for it not to be closed; swapping between the two waiting states does not cancel
+that); Waiting on WSO2 and Reopened, which a customer reply causes, still end a hold. A trigger so every writer
+(portal, API, sync) restarts the workflow identically. A customer reply moves a waiting ticket to Waiting on WSO2
+through the existing customer-reply rule, which fires it.
+
+**Routes** (internal callers only, `internalOnly`): `POST /autoclosure/candidates` lists what is due, oldest
+reference time first, optionally capped by `dailyLimit`; `POST /autoclosure/cases/{id}/advance` performs one
+stage on one ticket.
+
+**`Advance` is idempotent and race-safe**: it re-runs the listing predicate for that one ticket (a stale
+list is harmless), then **claims** the step with a compare-and-set on `(step, state_on, state)`
+(`ClaimStep`); a run that loses the claim posts nothing. Only then does it act. If the action fails the
+claim is restored (`RestoreStep`) so the next run retries, rather than leaving a ticket marked reminded that
+never was. Every outcome writes a `case_autoclosure_event` audit row.
+
+**Closing.** The close goes through the ordinary `caseService.UpdateCase`, as the system user, so events,
+SLA effects, the activity entry and `closed_by_user_id`/`closed_on` are exactly those of a manual close.
+Awaiting Info tickets get resolution code `ABRUPTLY_CLOSED_DUE_TO_NON_RESPONSIVENESS_THROUGH_AUTO_CLOSURE` (which
+keeps them out of the KB process); Solution Proposed tickets keep the resolution they were proposed with and
+never get that code. `close_notes` is the closure comment. The closure comment is written **after** the
+close (a comment first and a refused close would leave "this case is closed" on a case that is not); a
+failure of just the comment is logged and does not undo the close. A refused close (for example an open
+child appeared since the listing) is rolled back and retried next run.
+
+**Pending Verification.** A case the workflow closes is queued for the customer's own verification (the
+Pending Verification feature: `pending_verification`, reason `AUTO_CLOSED`, `previous_status` = the state it was
+closed from), so a case closed for inactivity does not silently disappear from their view. `queueForVerification`
+runs after the close and never fails it. It follows the rules `pendingVerificationService.CreatePendingVerification`
+enforces, but writes through `PendingVerificationRepository` as the system user, because that service needs an
+end-user token for "added by" and the workflow has none (this closes the "no machine-to-machine path" gap noted
+for that feature):
+- **Cases only**: a security report analysis is closed but never queued.
+- The project must have `verification_enabled` on; otherwise nothing is queued, quietly.
+- One unverified entry per case: an existing entry (`ConflictError`) counts as done.
+- Wired in `routes.go` with `WithPendingVerificationQueue`; without it (no feature) the close is unchanged.
+- The audit row's `detail` says "queued for customer verification" (or why not, when something failed).
+- **"Added by" is the system user's display name** (the `user.name`, e.g. "Support Team (auto-closure)"), not its email: the customer portal prints the stored value as it is. It falls back to the email if the name cannot be read.
+- **A short `note`** explains the close on the customer's card ("Automatically closed: no response to our request for information after two reminders." / "...to the proposed solution after two reminders.").
+
+**The one transition exemption.** No staff table lists Awaiting Info -> Closed (staff go through Waiting on
+WSO2). `UpdateCase` allows it only when the context carries `withAutoclosureActor` (`autoclosure_context.go`),
+which is unexported and set only by the workflow, and only for a close out of those two waiting states; it also
+attributes the close to the system user. No HTTP request can ask for it.
+
+**Daily limit.** `dailyLimit` is per UTC day across `first_reminder`, `second_reminder` and `close` (hold
+releases send nothing and are exempt). What the audit table says today's `ADVANCED` events already are is
+subtracted, so the three stages share one budget and a run the engine retries the same day cannot exceed it.
+Oldest-first ordering means a backlog never starves the longest-waiting ticket. The limit is applied when
+listing **and again in `Advance`, right before the claim** (`AutoclosureAdvanceRequest.DailyLimit`), so two
+overlapping runs cannot both spend the same remaining budget. Residual: a ticket already in flight in each
+concurrent run when the budget runs out can still complete, so the overshoot is at most one ticket per concurrent run.
+
+**Dry run.** `AutoclosureAdvanceRequest.DryRun` runs the whole decision (still due? within the limit?), records a
+`DRY_RUN` audit row and answers outcome `dry_run`; it posts nothing, claims nothing, closes nothing and queues
+nothing. `DRY_RUN` rows are not counted by the daily limit. The scheduled task sets it from `AUTOCLOSURE_DRY_RUN`
+and forces it for a `TRYOUT_TASK` of this task. A dry run claims nothing, so it can only preview what is due *now* (first reminders for tickets at `DEFAULT`, and later stages only for tickets already carrying a step); a clean dry run on a fresh backlog is therefore **not** sign-off on the close stage.
+
+**A ticket that keeps failing is left out for a while.** A ticket with 3 `FAILED` events for the same stage in the
+last 7 days (`autoclosureMaxFailures`, `autoclosureFailureWindowDays`) is dropped from the listing and the
+per-ticket re-check, so one permanently bad ticket (a refused close, for example) does not raise the same alert on
+every run. `FAILED` is the default: an error nobody has classified (a constraint violation, a wrapped internal error) repeats every run and must end up quarantined. Only errors that say nothing about the ticket are `FAILED_TRANSIENT`, which the cap ignores (a cancelled request or deadline, an unavailable dependency, a network or dropped-connection error, a database connection / resource / shutdown error), so a short outage cannot hide healthy tickets for a week. The listing returns the count it left out as `quarantined` (the scheduled task reports it in its run summary) and logs it. The rows age out of the window by themselves.
+
+**Failure and crash handling.** A step is claimed before the action. If the action fails, or the request is
+cancelled or times out, the claim is restored and the audit row written on a **detached context with its own 15 s
+bound** (`cleanupContext`), so a client that gave up cannot leave the ticket marked reminded with no comment. The one
+window this cannot close is a hard process kill between the claim and the comment: the ticket is then marked
+reminded without having been. It is rare, visible in the audit table (no `ADVANCED` row for the new step), and a
+sweep that re-opens such tickets is the follow-up if it is ever seen.
+
+**Data source and the ServiceNow mirror.** The workflow acts through the deployment's normal case service (`activeCaseSvc`), so its comments, state change and close follow the data source like every other case write: Postgres only on `DATA_SOURCE=postgres`; on `postgres-servicenow-dual-write`, Postgres first with the asynchronous, best-effort ServiceNow mirror (a failed mirror is recorded in `sn_writeback_failures` for replay and never fails or repeats a stage). Its own position (`autoclosure_step` / `autoclosure_state_on`) and the audit table are Postgres-only: ServiceNow has no field that mirror accepts for them. Verified by `TestAutoclosureIntegration_DualWrite*` (dual-write case service wired in):
+- A close carries `resolutionCode`, `cause` (Unknown when the ticket has none) and `closeNotes`, which the dual-write validation requires of an internal caller; a Solution Proposed ticket with no stored resolution code is refused by it (`FAILED`, quarantined after 3).
+- The mirrored close and comments reach ServiceNow as the integration's own M2M user (the scheduled task has no user token), not as the system user; the Postgres rows carry the system user.
+- A failing mirror neither fails the stage nor lets it repeat: the retry is `skipped`.
+- Dry run never reaches the case service, so it is honoured in this mode.
+Needs a decision from the team before enabling under dual-write (not verifiable from this repository): how ServiceNow's own auto-close flow is switched off per state, so both do not act on one ticket (suggest Solution Proposed first); whether ServiceNow accepts the mirrored Awaiting Info -> Closed move (a refusal lands in `sn_writeback_failures`, Postgres stays closed); and whether csm-sync-service writes `u_autoclosure_step` / `u_autoclosure_state_time` back over a claimed step.
+
+**Comment text** lives in `autoclosureDefaultTemplates` (`awaiting_info.` / `solution_proposed.` x
+`first_reminder` / `second_reminder` / `closure`). A caller may send overrides by key in `templates`; the
+scheduled task reads them from `AUTOCLOSURE_TEMPLATES`, so wording changes need no deploy of this service.
+
+**Decisions worth knowing.**
+- A ticket moves at most one stage per run, and an advance changes its step and clock, so it is no candidate
+  for the next stage until a full interval has passed.
+- Child tickets are never reminded or closed by the workflow, even one carrying a stale step.
+- A non-closed child blocks every stage, re-checked on every advance and again by `UpdateCase` itself.
+- `autoclose_enabled` has no UI yet; set it in SQL to exclude a ticket.
+- Migration 0249 is idempotent (re-runnable). Upstream numbering moves fast: re-check it is still the next free number against the target branch before merging.
+
+Run the two database test packages one at a time (`go test -p 1 ./internal/repository/ ./internal/service/ -run Autoclosure`): the daily-limit audit count is database-wide and the service tests write audit rows too.
+
+Tests: `autoclosure_repo_integration_test.go` (repository: selection matrix, claim exclusivity, reset trigger,
+audit count; `CASE_STATS_TEST_DSN`), `autoclosure_integration_test.go` (service end to end over the real case
+service, lifecycle through to the closed row; `ENTITY_TEST_DATABASE_URL`; run as `csm_app` so row-level
+security is in force), `autoclosure_service_test.go` / `autoclosure_close_test.go` (units).
 
 ## Change requests
 
@@ -4456,8 +4829,8 @@ on PATCH cannot be combined with `deploymentIds`.
 *PATCH.* Arrays replace. `deploymentIds` changed → deployments and products
 (re-derived) are rewritten; `[]` clears them. Changing `projectId` while deployments
 are stored requires `deploymentIds` in the same request. **Edit window:** deployments and
-deployment products can change only while the change has not reached `implement` (states
-new … scheduled); from implement/review/customer_review/rollback/closed/canceled a
+deployment products can change only until the change is approved (states new, assess,
+authorize); from customer_approval/scheduled/implement/review/customer_review/rollback/closed/canceled a
 *change* is a 400 ("<field> can no longer be changed: the change request is in state
 …") while re-sending the stored value is accepted. They are resolved against the change's
 project, which after New is the **frozen** stored one (the single-valued
@@ -4914,6 +5287,52 @@ and Request Approval now refuses that, so a test that needs the dead end uses
 `requestApprovalThenContactsLeave` (a stand-in contact that leaves right after Request Approval:
 the residual edge) or `legacyInCustomerState` (a row written with SQL, as an older build left it);
 the rest moved to a project with contacts, `createAnswerable`).
+
+### An approved change request is read-only (only work notes are added)
+
+Decision (the user's, 2026-10-21): once CAB approval has been received, every field of the change
+request is read-only, the implementation plan included; only work notes can still be added. Code:
+`change_request_approved_lock.go` (`checkApprovedContentLock`, called in `patchChangeRequestTx` right
+after `validateCreationPhaseEdits`), `CodeChangeRequestApprovedReadOnly` (`change_request_approved_read_only`).
+
+- **When:** the stored state is one of `customer_approval`, `scheduled`, `implement`, `review`,
+  `customer_review`, `closed`, `rollback` (`changeRequestApprovedStates`). Those are reached only through
+  an approval: the CAB approval for Normal and Emergency changes, and Request Approval for a Standard
+  change, which is pre-approved and has no CAB stage (so for a Standard change the lock starts at
+  Scheduled / Customer Approval). `canceled` is NOT in the set: a change can be cancelled before anybody
+  approved it. A pure function of the state, like the customer requirements lock: no column, no marker.
+- **What:** a PATCH that CHANGES any field -- title, description, justification, impactDescription
+  (compared through `COALESCE(impact_description, risk_impact_analysis)`), implementationPlan,
+  rollbackPlan (through `COALESCE(rollback_process, backout_plan)`), testPlan, serviceOutage,
+  communicationPlan, affected services / components, rollback duration, impact, priority, category,
+  the planned window, assignedTeamId, assignedEngineerId, requestedById, caseId, serviceId,
+  serviceOfferingId, isPlanningVisibleToCustomers and the two customer boxes -- is a 400 naming every
+  changed field ("description, implementationPlan can no longer be changed: the change request has been
+  approved (current state: scheduled), so its fields are read-only; only work notes can be added"), and
+  nothing is written, not even the rest of the request. The comparison is one SQL statement
+  (`approvedContentQuery`, `IS DISTINCT FROM` per field, ids and enum labels compared as text), so a
+  field resent with its stored value is the accepted no-op it is everywhere in this PATCH. The project
+  and the type keep their own (earlier, stricter) freezes; the deployments and deployment products are
+  held by `changeRequestLinksLockedStates`, whose window now closes at the same point.
+- **Still accepted:** `workNote` and `comment`, `state` (the lifecycle), `onHold` / `onHoldReason`,
+  `requestApproval`, a Re-schedule out of Customer Approval (`{state: "authorize"}` with a new window:
+  the window is exempt for a staff time response, anything else it carries is judged), WSO2's answer to
+  a time the customer proposed, and the customer's own answer / proposal (external callers return before
+  this). Tags and attachments are other endpoints and are not touched.
+- **Order:** after the pure customer-lock rules (a type that is frozen, a box that can never be unticked,
+  the Emergency consent rule keep their own words) and before the rules that ask who could be asked
+  (`checkTickedBoxCanBeAsked`, `checkRequestedByLeavesSomebodyToAsk`): past the approval no contact would
+  make an edit possible, so their words would mislead. **This supersedes the earlier "a customer box is
+  add-only until the gate it controls"** after the approval: the review box can no longer be ticked in
+  Scheduled / Implement / Review.
+- **Not enforced:** the data source that talks to the previous system directly (the PATCH goes there and
+  that system decides), and csm-sync-service's own SQL writes. The CSM webapp and microapp disable their
+  Edit forms for these states (the webapp keeps a work-note field); the backend is the authority.
+- Tests: `change_request_approved_lock_test.go` (states, fields, query, message),
+  `change_request_approved_lock_integration_test.go` (every approved state read-only, resend accepted,
+  work notes and on hold accepted, refused PATCH writes nothing; editable before approval, NULL and
+  canceled), run as a superuser and as `csm_app`. Existing tests that edited an approved change now
+  carry `onHoldReason` / a work note as "the rest of the request" (`holdReasonOf`).
 
 ### Customer Group: approving / rejecting Customer Approval and Customer Review
 
@@ -7337,7 +7756,7 @@ decision, not overlooked.
 every caller and every `DATA_SOURCE`:
 
 1. `assignmentGroupId` sent: used when it is in the **support-group set**, else 400
-   `assignmentGroupId must be the active support group of a service` with `errorCode`
+   `assignmentGroupId must be an active group incidents can be assigned to` with `errorCode`
    `incident_assignment_group_not_allowed`, which the CSM portal BFF passes through
    (non-UUID: 400 without a code; blank: not sent).
 2. Not sent: the service's support group (`service.support_group_id`).
@@ -7346,18 +7765,60 @@ every caller and every `DATA_SOURCE`:
 5. A lookup failure returns its error; nothing is created.
 
 The **support-group set** is `supportGroupSetSQL` (`support_group_repo.go`): active `"group"` rows
-(`is_active` NULL counts as active) that are the support group of at least one service. The create
-check (`IncidentRepository.IsSupportGroup`) and `POST /groups/search` with
-`filters.supportGroupsOnly` (`GroupRepository.SearchSupportGroups`, which reads `"group"`, not the
-`team` registry) share it. A work note records the choice ("Assignment group set from service X's
+(`is_active` NULL counts as active) that are the support group of at least one service. The
+**incident-assignable set** is that plus active `"group"` rows whose id is in
+`INCIDENT_EXTRA_ASSIGNMENT_GROUP_IDS` (`incidentAssignableGroupSQL`, same file; groups that own no
+service, matched by id never by name). The create check (`IncidentRepository.IsSupportGroup`) and
+`POST /groups/search` with `filters.supportGroupsOnly` (`GroupRepository.SearchSupportGroups`, which
+reads `"group"`, not the `team` registry) share the incident-assignable set, so the picker never
+offers a group the create refuses. The case-alert route options (`case_alert_settings_repo.go`) keep
+reading plain `supportGroupSetSQL` and never gain the extra groups. The allowlist reaches the
+repositories through `NewIncidentRepository` / `NewGroupRepository` (variadic ids). A work note records the choice ("Assignment group set from service X's
 support group" / "Assignment group chosen by <actor>" / "Service X has no support group; assigned
 to the default team (G)"), after the caller's own `workNotes`. Dual-write decides on Postgres before
 the ServiceNow create (the mirror never looks one up), so both stores get the same group and a
 refused group never reaches ServiceNow; Postgres keeps no create work notes in that mode (an older
 gap), so the note lands in ServiceNow only. `DATA_SOURCE=servicenow` uses the same function over
 ServiceNow's services (`scanSNServices`: only a complete scan may conclude "not there"); the service
-list carries no group's active flag, so that set cannot leave out an inactive group.
+list carries no group's active flag, so that set cannot leave out an inactive group. On that data
+source the create check also accepts the allowlisted ids (no lookup, no active check possible), but
+the `supportGroupsOnly` picker does NOT yet list them: the group search cannot fetch a group's name
+by id, so listing them needs a design choice (open).
 `GET /incidents/create-defaults` (internal only) reports the default service and its group.
+
+## Case Alerts group routes reference the assignment group (migration 0243)
+
+`paging_group_route` (0233) matched an incident's assignment group by its typed name only.
+0243 adds a nullable `group_id` (FK `"group"`, `ON DELETE SET NULL`), a unique partial index
+`(ladder, group_id)` and a backfill where exactly one `"group"` row has the route's name;
+`IF NOT EXISTS` throughout, re-runnable. `SaveRoute` with a `groupId` (Alert Settings picks it from
+`routeOptions.assignmentGroups`, the active support groups, `supportGroupSetSQL`) stores the
+group's own name and id, 400 when the id is not one of them. `ListRoutes`/`Runtime` read the
+group's current name through `group_id`, so a rename in ServiceNow keeps its route.
+`CaseAlertSettings.unmappedGroups` (SRE viewers only) lists the support groups no enabled SRE route
+covers, no team is named after and the running config does not route (an alias or a default group in
+the notifier's last report, `running.groups.SRE`; without a report only routes and team names count):
+csm-notification-service posts their incident cards to the shared SRE room. Deploy entity-service before the BFF and webapp that send `groupId` (strict decoding).
+
+**An SRE assignment group's own chat room (migration 0244).** `paging_chat_room.group_id` (FK
+`"group"`, `ON DELETE CASCADE`; a check keeps such a room SRE-only with no team, teamless flag or
+channel) gives one support group a webhook of its own; the room scope index became
+`paging_chat_room_scope_group_uq` on `(ladder, team_key, group_id)` (the old
+`paging_chat_room_scope_uq` is dropped, so deploy this build with the migration: the old build's
+`ON CONFLICT` names the old index). `SaveRoom` with `groupId` checks it against the support-group
+set (`AssignmentGroupByID`) and defaults the label to the group's name; `ListRooms` returns the
+group's current name; `Runtime` sends a group room only with its URL, as `groupId`/`groupName`. A
+group with an enabled room that has a URL is not listed in `unmappedGroups`. `routeOptions.
+assignmentGroups[].services` lists each group's services by name (one aggregate over `service`).
+Only the chat space follows the group: who is called still follows its route.
+
+**Who may see and change each family's Case Alerts settings** (`whoIsAsking`): a CSM or
+portal admin and the CS head (`cs_head` on any team): all three families; the CRE rota admin and
+the CRE head (`cre_head`): CRE; the SRE rota admin: SRE; the SME rota admin: SME. Seeing and changing
+go together, and another family's rooms, routes, values and running report are never sent. The saved
+values include each ladder's own switches (`enabled`, `channel` for CRE, SRE and SME;
+`safety.maxCallsPerLadder` 1-50, `safety.callWithoutVerifiedLeads`, `safety.callHeadsWithoutLowerTiers`
+for CRE and SRE), so they follow the same per-family rule.
 
 ## IT services (CMDB services)
 
@@ -7795,14 +8256,14 @@ impact or urgency recomputes priority with ServiceNow's lookup; a new category t
 the current subcategory clears it; `watchList` replaces `work_item_watcher`. A field sent as
 `null` is ignored, as on the ServiceNow path; only `environment` can be cleared.
 
-`IncidentView.WatchList`/`LinkedServiceRequests` are always empty slices on
-this data source (never populated) -- `work_item_watcher` could back the
-former (same table `SetCaseWatchList`/`fetchCaseWatchers` already use for
-cases) and `work_item.parent_id` reverse lookups could back the latter,
-matching the pattern `ProblemRepository.GetProblem`'s `LinkedIncidents`
-already uses for `incident.problem_id`'s own reverse lookup -- left as a
-known, flagged gap rather than built out further given the size of this
-change, not because either is infeasible.
+`IncidentView.WatchList` is read from `work_item_watcher` (`incidentWatchers`), the
+table `UpdateIncidentLifecycle`'s `watchList` replaces. The CSM list's bulk edit adds
+people to, or removes them from, the list it reads, so an empty read would replace
+the stored watchers instead. `TestIncidentUpdateIntegration_DetailReadsWatchList`
+holds the round trip. `LinkedServiceRequests` is still always an empty slice on this
+data source (never populated) -- `work_item.parent_id` reverse lookups could back it,
+matching the pattern `ProblemRepository.GetProblem`'s `LinkedIncidents` already uses
+for `incident.problem_id`'s own reverse lookup -- left as a known, flagged gap.
 
 **`SearchIncidentActivities`/`SearchCaseActivities` verify the id is
 actually an incident/case-like work item before reading its activity
@@ -7911,6 +8372,18 @@ and return real usage/metrics data, even though that same record is treated
 everywhere else as having no product at all. The resolver's own lookup now
 requires `product_id IS NOT NULL` too.
 
+**`PRODUCT_CONSUMPTION_DATA_READ_MODE` (`postgres` default, or `legacy`) -- added because production is
+not yet ready for the Postgres-only read path under dual-write.** `postgres` is the
+behaviour described above. `legacy` restores the previous routing for exactly those
+seven methods and only under `DATA_SOURCE=postgres-servicenow-dual-write`: the five
+`InstanceService` methods are wired through `NewInstanceServiceWithSNFallback` and the
+two `DeployedProductService` methods delegate to the mirror (`WithLegacyUsageReads`).
+The decision is made in one place, `Config.UsageReadRoute()` (DATA_SOURCE x
+PRODUCT_CONSUMPTION_DATA_READ_MODE), and `routes.go` only switches on its result. `DATA_SOURCE=postgres`
+and `DATA_SOURCE=servicenow` ignore the flag. An invalid value fails startup in
+`Config.Validate`. The repository-level fixes below stay in the Postgres queries and
+are simply not reached under `legacy`.
+
 Two real bugs were also found and fixed in `SearchInstanceMetricsStats`
 while reconciling this against the real upstream aggregation logic it is
 meant to replicate: it summed every `deployment_information` row per day
@@ -7940,6 +8413,32 @@ queried the *new* names) and fixed to match both — with the old names,
 `SearchInstances`, `SearchInstanceMetrics` and `SearchInstanceUsage` failed on
 staging with "column does not exist". Still worth checking the live schema
 before trusting any migration file, here or elsewhere.
+
+**Live usage telemetry and the daily table.** `InsertUsageStats` writes one
+`hourly_usage_summary` row per report and recomputes that UTC day's `API_CALL` row of
+`daily_usage_summary` from the day's hourly rows: the **sum** for a counter
+(`TRANSACTION_COUNT`, `M2M_TOKEN`, every `AGENT_*` type -- each report is the amount since the
+previous one) and the **latest report by `counted_on`** for anything else (users,
+organisations, cores, MAU). It used to store the reported count as the day's value, so a
+counter published every hour showed only its last hour. A `FILE_UPLOAD` row (an offline
+report) for the same node, day and type is a separate row and is never touched. A report the
+product re-sends after a timeout is stored once: the hourly insert skips a row that already
+exists for the same node, count type and `counted_on` (the endpoint has no request id, so the
+report's own timestamp is the key; `RetriedReportsAreCountedOnce`).
+
+**Reading the daily table: one row per node, type and day.** Nothing stops a connected
+customer from also uploading a report that covers days the product already published, so a
+node-day can hold both an `API_CALL` and a `FILE_UPLOAD` row. The daily reads behind the
+portals' usage views (`SearchDeployedProductMetrics`' CORES rows,
+`SearchDeployedProductUsageCounts`, `SearchInstanceUsageStats`) used to `SUM` every row of a
+node, type and day, which added the two: 8 cores showed as 16, 1,000 transactions as 2,000.
+They now keep one row per node, type and day (`dailyUsageSourcePreference`: a row with a
+value, then the live row, then the latest updated) -- the same choice `rollup_monthly_usage`
+makes, so the daily views and the monthly table agree. An explicit `dataSource` filter still
+returns that source's rows alone. `data_source` is nullable (0054), and under `DESC` a NULL
+comparison sorts ahead of `TRUE`, so both test the live row with `IS TRUE`: a row with no
+source ranks with the uploaded ones. Migration 0250 redefines `rollup_monthly_usage` for that
+one change, since 0245 had already run on servers.
 
 **Project/Deployment/DeployedProduct references, verified against staging.**
 `deployment_node.product_version_id` is a real foreign key, so `Product` is
@@ -8012,6 +8511,18 @@ because only one of them carries what each endpoint needs:**
   or 2) only has something to filter against there.
   `instanceDataSourceEnum` (`instance_service.go`) maps 1/2 to the enum
   labels; an unrecognized value is a `ValidationError`, not a silent no-op.
+- `POST /deployed-products/{id}/metrics/search` (the Core Usage chart on the
+  deployed-product usage pages) draws a node's cores from either source: a `CORES` row
+  of `daily_usage_summary` (offline reports, products that send cores as a usage count),
+  or `deployment_information.core_count` (the host snapshot every live heartbeat's info
+  call carries, and what `SearchInstanceMetricsStats` already reads). A `CORES` row wins
+  for its node and day; a snapshot fills the days without one, one value per node per
+  day. A snapshot stands for every UTC day from its first to its last report (a repeated
+  hash only moves `payload_updated_on`, and an unchanged hash means unchanged cores);
+  where two overlap on a day the one first reported later wins, and if it has no
+  `core_count` the node has no reading that day. It used to read only the usage rows, so telemetry
+  that reports cores through the snapshot never drew a chart here although the instance
+  stats showed it; the CSM portal's Core Usage panel was empty for it.
 - `SearchInstanceMetricsStats` has the same `DataSource` field on its
   request type (`InstanceStatsFilters` is shared), but `deployment_information`
   has no data-source column at all -- there's nothing to filter on Postgres.
@@ -8046,6 +8557,57 @@ it writes these tables through `POST /instances/meta`, `/instances/info`,
 `/instances/usage-stats`, `/instances/daily-usages/batch` and verifies telemetry
 signatures with `GET /projects/{key}/secret-key` (`instance_ingestion_*.go`).
 
+- **Rollups run in the database** (`0245_usage_rollup_functions.sql`): `POST
+  /instances/usage-rollups/daily` (`{"date"}`) and `/monthly` (`{"year","month"}`) call
+  `rollup_daily_usage(date[, node_ids])` and `rollup_monthly_usage(year, month)`, set-based SQL that
+  moves no usage row through the service. Daily rebuilds that UTC day's `API_CALL` rows from
+  the hourly rows; monthly rebuilds the month from the daily rows. A **counter**
+  (`usage_count_type_is_counter`: `TRANSACTION_COUNT`, `M2M_TOKEN`, `AGENT_*`) is summed, any other
+  type takes its latest reading. Monthly counts a node-type-day once (the live row over a
+  `FILE_UPLOAD` one) and includes nodes that only have uploaded days (air-gapped). Both are
+  idempotent and only touch the period given. The daily function takes the same per-node
+  advisory locks as ingestion, in byte order (`COLLATE "C"`, the order Go's `sort.Strings` gives
+  the batch import, whatever the database collation), and the service runs it 100 nodes per
+  transaction so a busy day never holds thousands of advisory locks at once; the monthly one
+  serialises runs of the same month (`monthly_usage_summary` has no unique key). Keep
+  `usage_count_type_is_counter` in step with the Go counter rule.
+- **A retried report is stored once.** `hourly_usage_summary` has no unique key, and counters are
+  summed, so `InsertUsageStats` skips a row whose node, count type and `counted_on` are already
+  there (under the node lock, so it cannot race). Both sums (the live recompute and
+  `rollup_daily_usage`) also count one row per `counted_on`, for duplicates already in the table.
+  No unique index: synced rows may already hold duplicates, which would fail it.
+- **Late uploads reach the monthly table** when `USAGE_ROLLUP_ENABLED=true` (default off, the
+  switch csm-scheduled-tasks uses too): the batch import then rebuilds every month its rows fall
+  in, oldest first, in its own transaction. Off, nothing writes `monthly_usage_summary` here, so it
+  keeps one writer while the previous system's aggregation jobs and csm-sync still fill it.
+- **Backfill, once, when the rollups are switched on.** Days ingested before the hourly-derived
+  daily value hold the last report rather than the day's sum, and the scheduled daily task only
+  rebuilds the last 2 days. Call `POST /instances/usage-rollups/daily` for each day since product
+  consumption tracking started writing here (or run csm-scheduled-tasks once with
+  `USAGE_ROLLUP_DAILY_LOOKBACK_DAYS` covering them), then `/monthly` for each of those months, and
+  `/monthly` for any month an earlier upload covered. Every call is idempotent, and a day with no
+  hourly rows (one the previous system filled) is left as it is. `pg_cron` is available on the server but not installed (it needs a
+  platform admin); a scheduler can call these functions, today `csm-scheduled-tasks` via these
+  endpoints.
+- **Unresolved products are kept and listed** (migration 0247). A node's reported product and
+  version are stored as `deployment_node.reported_product`/`reported_version` whenever both are
+  sent; `product_version_id` is the catalogue match and is NULL when there is none (the node then
+  loses any earlier version, rather than keep a stale one). A miss is logged at warn
+  (`reported product is not in the product catalogue`), and `GET /instances/unresolved-products`
+  (`since`, default 24 h ago; `limit`, default 500, max 5000) lists such nodes, grouped by what they
+  reported. This replaces ServiceNow's email to a fixed address on every miss; the daily digest is
+  a csm-scheduled-tasks job. Product and version are now length-checked (255 / 100).
+  `deployment_node.unresolved_since` records when the node's reports stopped matching (kept across
+  heartbeats, cleared when it matches, set afresh if it goes unresolved again) and is returned as
+  `unresolvedSince`; `updated_on` moves with every heartbeat and `created_on` is the node's first
+  report, so neither says that. The response says `truncated: true` when more nodes matched than
+  the limit.
+- **Every report import is recorded** (migration 0248, `usage_report_import`): the batch import
+  writes one history row in its own transaction (uploader, project, deployment, the report's
+  `exportVersion`/`exportedAt`/`exportValid`, node and row counts), so a failed import leaves none.
+  `GET /instances/daily-usages/imports` (`projectKey` and/or `deploymentNumber`, `limit` default
+  100, max 1000) lists them newest first. The previous system's equivalent was
+  `u_product_consumption_import_history`.
 - **Internal callers only** (`internalOnly`): PCT's client id must be in
   `M2M_CLIENT_IDS`. The repository has no system-identity fallback. The
   secret key is a credential (`Cache-Control: no-store`); a project with no key
@@ -9374,6 +9936,26 @@ unaffected and keeps creating external users exactly as before. `apps/csm-portal
 disables the "External" option in its type selector rather than offering a choice the backend will
 reject — all three are temporary, meant to come out together once external-type creation is ready.
 
+## Air-gapped deployments (`deployment.air_gapped`)
+
+Migration 0246 adds `deployment.air_gapped` (default false). An air-gapped deployment's products
+cannot reach WSO2: the licence PCS issues for it ends its `secrets` string in the marker the
+product reads as "do not publish online", and its usage arrives by uploaded report instead. This
+replaces ServiceNow's hand-run licence script, which applied the marker only for one hard-coded
+requester's email and recorded nothing.
+
+- Set through `PUT /deployments/{id}/air-gapped` (`{"airGapped": true|false}`), **internal-only**,
+  Postgres-only (ServiceNow has no such field; nothing is mirrored back, and the handler is not
+  registered without a database). It has its own small repository/service/handler rather than going
+  through `PATCH /deployments/{id}`, whose detail-vs-deactivate rules and ServiceNow write-back do not
+  apply to it. `updated_by` is the x-user-id-token's email when present, else `internal-client`.
+- Entity-service only knows internal vs customer callers; restricting it to a staff group is the
+  portal backend's job. The CSM portal does this: its backend exposes the same
+  `PUT /deployments/{id}/air-gapped` behind `PermWrite` (cs_engineer, admin), and the project's
+  Deployments tab sets or clears it from a deployment's action menu.
+- Read back as `airGapped` on `POST /deployments/search` results (`DeploymentView.AirGapped`, null
+  under `DATA_SOURCE=servicenow`), which is where PCS reads it from.
+
 ## SearchDeployments crashed on any page containing a NULL deployment.type
 
 Reported live: `POST /deployments/search` failing with `cannot scan NULL into
@@ -9722,6 +10304,34 @@ new repository method this needed — a single-row lookup
 (`SELECT product_category::TEXT FROM deployed_product WHERE id = $1`,
 lower-cased before returning), deliberately not reusing
 `SearchDeployedProducts`' list/filter machinery for a one-row check.
+
+## Skills (`/skills`, Postgres only)
+
+`SkillService` (`internal/service/skill_service.go`) serves the skill catalogue, each internal user's own
+skills profile, the manager's view of everybody's, and the admin's catalogue edits, over the tables of
+migration 0079 (`skill*`, `user_skill`, `user_skill_history`). Registered only with a database pool.
+
+- **Who.** Catalogue reads: any internal caller. `/skills/me*`: the token's own user, found by the token's
+  email among active internal users; no route takes a person's id, and the identity provider's id is never
+  compared with a platform id. `POST /skills/users/search`: a CSM admin (a token role in `AUTH_ADMIN_ROLES`, as
+  for rota access) or a lead (`lead`, `americas_team_lead`) of a CRE or SRE team. `POST /skills` and
+  `PATCH /skills/{id}`: CSM admin only.
+- **No unique key on `user_skill(user_id, skill_id)`**, and migrated rows are not known to be free of repeats.
+  Every profile write holds `pg_advisory_xact_lock` for the pair and reads the pair's rows `FOR UPDATE`; every
+  read takes one canonical row per pair (`userSkillCanonical`: active, own before inherited, newest). An add
+  over an inactive own row revives it. Adding a held skill is a 409. A unique index needs the production data
+  checked for repeats first, so it is not added here. `skill.name` has no unique key either: create and rename
+  hold a per-name advisory lock and compare ignoring case.
+- **Levels.** A level must belong to the skill's `level_type_id` scale (checked in the service; no FK does it). The profile
+  write re-checks it inside its transaction under `FOR SHARE` on the skill row, which an admin's scale change
+  (`FOR UPDATE`) queues behind; a scale swapped in between is a 409. Ids are lower-cased once validated.
+  Inactive skills cannot be newly added (an add re-reads `active` in that same locked query, so a deactivation
+  racing the add is a 409 too; changing the level of an already-held skill is unaffected). Every set, change and removal writes a `user_skill_history` row
+  (`level_from_id` null on first set, `level_to_id` null on removal; `created_by` is the actor's email); setting
+  the level already held writes nothing. A removal deletes the `user_skill` row. Inherited rows are never
+  changed (409). A skill's scale cannot change while any `user_skill` holds a level of it (409).
+- **Manager search** lists active internal people and active skills only, one row per person-skill, every filter
+  (skill, level, minimum level value, team key, name or email, user ids) applied in SQL.
 
 ## Adding a new entity
 

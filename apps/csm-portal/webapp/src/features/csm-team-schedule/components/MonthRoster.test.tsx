@@ -20,6 +20,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import MonthRoster from "./MonthRoster";
+import type { EngagementAllocation } from "../types";
 import {
   ANNUAL_LEAVE,
   EVENING,
@@ -947,7 +948,8 @@ describe("MonthRoster: the SaaS Night cover is a team people are moved to", () =
     expect(nia?.textContent).toContain("L1");
     // Being on the Night cover is the whole of it: no tag drawn on the days.
     expect(nia?.textContent).not.toContain("NC");
-    expect(container.querySelector(".rlegend")?.textContent ?? "").not.toContain("SaaS Night cover");
+    // The legend still names it: it is a move an SRE rota marker can add.
+    expect(container.querySelector(".rlegend")?.textContent ?? "").toContain("SaaS Night cover");
     expect(screen.getAllByText("Nia")).toHaveLength(1);
     // Somebody holding a night without being moved stays on their own team.
     expect(rowOf(container, "Tom")?.querySelector(".team")?.textContent).toBe("Delta");
@@ -1054,6 +1056,56 @@ describe("MonthRoster: reading the codes", () => {
     expect(within(legend).queryByText(HD_PM.label)).not.toBeInTheDocument();
   });
 
+  it("lists every tag a rota marker can add on this rota, in catalogue order, on screen or not", () => {
+    const ALLO_INT = { ...ANNUAL_LEAVE, id: "k-int", code: "ALLO_INT", shortCode: "Allo-INT", label: "Allocated — internal", bucket: "ALLOCATION" as const, colourToken: "INT", sortOrder: 30 };
+    const LIEU = { ...ANNUAL_LEAVE, id: "k-ll", code: "LIEU_LEAVE", shortCode: "LL", label: "Lieu leave", colourToken: "LL", sortOrder: 20 };
+    const MIG = { ...ALLO_INT, id: "k-mig", code: "MIGRATION", shortCode: "Mig", label: "Migration", colourToken: "MIG", sortOrder: 90, family: "CRE" as const, movesToTeamKey: "bravo" };
+    const RETIRED = { ...ALLO_INT, id: "k-cus", code: "CUSTOMER", shortCode: "CUS", label: "Customer allocation", sortOrder: 43, retired: true };
+    const EXCLUDED_KIND = { ...ALLO_INT, id: "k-exc", code: "EXCLUDED", shortCode: "EXC", label: "Excluded from rota", bucket: "EXCLUDED" as const, sortOrder: 110 };
+    const SRE_RND = { ...RND, family: "SRE" as const };
+    const { container } = renderRoster({
+      family: "CRE",
+      // Lieu leave is on screen; nothing else is.
+      absences: [absence({ name: "Asela", startsOn: "2026-09-22", endsOn: "2026-09-22", kindCode: LIEU.code })],
+      absenceKinds: [MIG, SRE_RND, ALLO_INT, RETIRED, EXCLUDED_KIND, LIEU, ANNUAL_LEAVE],
+    });
+    const legend = container.querySelector(".rlegend") as HTMLElement;
+    const labels = [...legend.querySelectorAll(".chip")].map((c) => c.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["AL", "LL", "Allo-INT", "Mig"]));
+    expect(labels.indexOf("AL")).toBeLessThan(labels.indexOf("LL"));
+    expect(labels.indexOf("Allo-INT")).toBeLessThan(labels.indexOf("Mig"));
+    // Not this rota's (RnD is SRE's), retired, or not a lead's to set.
+    expect(within(legend).queryByText(SRE_RND.label)).not.toBeInTheDocument();
+    expect(within(legend).queryByText(RETIRED.label)).not.toBeInTheDocument();
+    expect(within(legend).queryByText(EXCLUDED_KIND.label)).not.toBeInTheDocument();
+  });
+
+  it("lists a move worked as another team's hours as those hours", () => {
+    const AMERICAS = shift({ code: "CRE_AMERICAS", shortCode: "NLK", label: "Americas cover", colourToken: "NLK", isRotation: false });
+    const BR = { ...ANNUAL_LEAVE, id: "k-br", code: "ALLO_BR", shortCode: "BR", label: "Brazil rotation", bucket: "ALLOCATION" as const, sortOrder: 70, movesToTeamKey: "americas", worksRotaThere: true, showsAsShiftCode: AMERICAS.code };
+    const { container } = renderRoster({
+      family: "CRE",
+      shifts: shiftMap(REGULAR, EVENING, AMERICAS),
+      absenceKinds: [ANNUAL_LEAVE, BR],
+    });
+    const legend = container.querySelector(".rlegend") as HTMLElement;
+    expect(within(legend).getByText("Americas cover")).toBeInTheDocument();
+    expect(within(legend).queryByText(BR.label)).not.toBeInTheDocument();
+  });
+
+  it("does not list another rota's hours for such a move", () => {
+    const AMERICAS = shift({ code: "CRE_AMERICAS", shortCode: "NLK", label: "Americas cover", colourToken: "NLK", isRotation: false });
+    const BR = { ...ANNUAL_LEAVE, id: "k-br", code: "ALLO_BR", shortCode: "BR", label: "Brazil rotation", bucket: "ALLOCATION" as const, sortOrder: 70, movesToTeamKey: "americas", worksRotaThere: true, showsAsShiftCode: AMERICAS.code };
+    const { container } = renderRoster({
+      family: "SRE",
+      assignments: [],
+      shifts: shiftMap(TZ1, TZ2, AMERICAS),
+      absenceKinds: [ANNUAL_LEAVE, BR],
+    });
+    const legend = container.querySelector(".rlegend") as HTMLElement;
+    expect(within(legend).queryByText("Americas cover")).not.toBeInTheDocument();
+  });
+
   it("lists labels only, not the grid's own marks", () => {
     const { container } = renderRoster({
       absences: [absence({ name: "Asela", startsOn: "2026-09-21", endsOn: "2026-09-21" })],
@@ -1104,5 +1156,174 @@ describe("MonthRoster: editing by keyboard", () => {
       "title",
       expect.stringContaining("lead or a CRE rota admin can change this"),
     );
+  });
+});
+
+describe("MonthRoster: customer engagement markers", () => {
+  const JANE = "00000000-0000-0000-0000-000000000001";
+  const alloc = (over: Partial<EngagementAllocation> = {}): EngagementAllocation => ({
+    id: "a1",
+    userId: JANE,
+    engagementId: "00000000-0000-0000-0000-0000000000e1",
+    startDate: "2026-09-22",
+    endDate: "2026-09-24",
+    accountName: "Example Corp",
+    engagementDisplayId: "ENG-1001",
+    engagementType: "CONSULTANCY",
+    modeOfDelivery: "ONSITE",
+    allocationId: "ALLOC-7",
+    utilization: 50,
+    ...over,
+  });
+  const onRota = [
+    assignment({ name: "Jane Doe", userId: JANE, rotaDate: "2026-09-21", shiftCode: EVENING.code }),
+    assignment({ name: "Asela", rotaDate: "2026-09-21", shiftCode: EVENING.code }),
+  ];
+  const marks = (el: ParentNode) => [...el.querySelectorAll(".engmk")] as HTMLElement[];
+  const rowOf = (c: HTMLElement, name: string) =>
+    [...c.querySelectorAll("tbody tr")].find((r) => r.textContent?.includes(name)) as HTMLElement;
+
+  it("draws no marker, and no legend entry, without allocations", () => {
+    const { container } = renderRoster({ assignments: onRota });
+    expect(marks(container)).toHaveLength(0);
+    expect(container.querySelectorAll(".engmksw")).toHaveLength(0);
+  });
+
+  it("marks only the days an allocation covers, on that engineer's row", () => {
+    const { container } = renderRoster({ assignments: onRota, engagementAllocations: [alloc()] });
+    const jane = rowOf(container, "Jane Doe");
+    const cells = [...jane.querySelectorAll("td")];
+    const marked = cells.map((td, i) => (marks(td).length ? i + 1 : 0)).filter(Boolean);
+    // Sept 22 to 24 on a grid that starts on the 1st.
+    expect(marked).toEqual([22, 23, 24]);
+    expect(marks(rowOf(container, "Asela"))).toHaveLength(0);
+  });
+
+  it("does not draw days outside the days on the grid", () => {
+    const { container } = renderRoster({
+      assignments: onRota,
+      engagementAllocations: [alloc({ startDate: "2026-08-25", endDate: "2026-09-02" })],
+    });
+    expect(marks(rowOf(container, "Jane Doe"))).toHaveLength(2);
+  });
+
+  it("carries the week view's details in the title, with the label leading", () => {
+    const { container } = renderRoster({ assignments: onRota, engagementAllocations: [alloc()] });
+    expect(marks(container)[0]).toHaveAttribute(
+      "title",
+      "Example Corp - ENG-1001: Consultancy ● Onsite ● ALLOC-7 ● 50% ● 2026-09-22 - 2026-09-24",
+    );
+  });
+
+  it("lists every allocation on a day in one marker, one per line", () => {
+    const { container } = renderRoster({
+      assignments: onRota,
+      engagementAllocations: [
+        alloc(),
+        alloc({ id: "a2", accountName: "Another Corp", engagementDisplayId: "ENG-2002", startDate: "2026-09-23", endDate: "2026-09-23" }),
+      ],
+    });
+    const jane = rowOf(container, "Jane Doe");
+    const day23 = marks([...jane.querySelectorAll("td")][22]);
+    expect(day23).toHaveLength(1);
+    const lines = day23[0].getAttribute("title")!.split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("Another Corp - ENG-2002");
+    expect(lines[1]).toContain("Example Corp - ENG-1001");
+    // The 22nd has the one allocation only.
+    expect(marks([...jane.querySelectorAll("td")][21])[0].getAttribute("title")!.split("\n")).toHaveLength(1);
+  });
+
+  it("names the marker once for assistive technology, and says how many", () => {
+    const { container } = renderRoster({
+      assignments: onRota,
+      engagementAllocations: [alloc(), alloc({ id: "a2", accountName: "Another Corp" })],
+    });
+    const m = marks(container)[0];
+    expect(m).toHaveAttribute("role", "img");
+    expect(m.getAttribute("aria-label")).toMatch(/^2 customer engagements\. /);
+    expect(m.getAttribute("aria-label")).not.toContain("\n");
+    expect(screen.getAllByRole("img", { name: /customer engagement/i })).toHaveLength(3);
+  });
+
+  it("leaves the rota chip, the leave and the cell's own title as they were", () => {
+    const base = renderRoster({ assignments: onRota, absences: [absence({ name: "Jane Doe", userId: JANE, startsOn: "2026-09-23", endsOn: "2026-09-23" })] });
+    const before = [...rowOf(base.container, "Jane Doe").querySelectorAll("td")].map((td) => [td.className, td.getAttribute("title"), td.querySelector(".chip")?.textContent]);
+    base.unmount();
+    const { container } = renderRoster({
+      assignments: onRota,
+      absences: [absence({ name: "Jane Doe", userId: JANE, startsOn: "2026-09-23", endsOn: "2026-09-23" })],
+      engagementAllocations: [alloc()],
+    });
+    const after = [...rowOf(container, "Jane Doe").querySelectorAll("td")].map((td) => [td.className, td.getAttribute("title"), td.querySelector(".chip")?.textContent]);
+    expect(after).toEqual(before);
+    // The leave day still shows its chip, with the marker beside it.
+    const leaveCell = [...rowOf(container, "Jane Doe").querySelectorAll("td")][22];
+    expect(leaveCell.querySelector(".chip")).not.toBeNull();
+    expect(marks(leaveCell)).toHaveLength(1);
+  });
+
+  it("keeps the marker out of the way of an edit click", () => {
+    const onEditCell = vi.fn();
+    const { container } = renderRoster({
+      assignments: onRota,
+      engagementAllocations: [alloc()],
+      leadTeams: ["alpha"],
+      editing: true,
+      onEditCell,
+    });
+    fireEvent.click(marks(container)[0]);
+    expect(onEditCell).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains the marker in the legend, once, only while markers are drawn", () => {
+    const { container } = renderRoster({ assignments: onRota, engagementAllocations: [alloc()] });
+    expect(container.querySelectorAll(".engmksw")).toHaveLength(1);
+    expect(container.textContent).toContain("Customer engagement: a strip under the day");
+  });
+
+  it("hides the legend entry when the only allocations are off the grid", () => {
+    const { container } = renderRoster({
+      assignments: onRota,
+      engagementAllocations: [alloc({ startDate: "2026-10-05", endDate: "2026-10-06" })],
+    });
+    expect(container.querySelectorAll(".engmksw")).toHaveLength(0);
+  });
+
+  it("says quietly that engagements could not be loaded, and draws the roster unchanged", () => {
+    const base = renderRoster({ assignments: onRota });
+    const html = base.container.querySelector("table")!.innerHTML;
+    base.unmount();
+    const { container } = renderRoster({ assignments: onRota, engagementsFailed: true });
+    expect(screen.getByRole("status")).toHaveTextContent("Customer engagements could not be loaded, so they are not shown.");
+    expect(container.querySelector("table")!.innerHTML).toBe(html);
+  });
+
+  describe("on a zone-split day", () => {
+    const sre = {
+      assignments: [
+        assignment({ name: "Jane Doe", userId: JANE, rotaDate: "2026-09-22", shiftCode: TZ1.code, zoneCode: "TZ1", teamKey: "delta" }),
+      ],
+      family: "SRE" as const,
+      engagementAllocations: [alloc({ startDate: "2026-09-22", endDate: "2026-09-22" })],
+    };
+
+    it("runs the strip across every zone of the day but names it once", () => {
+      const { container } = renderRoster(sre);
+      const day = marks(rowOf(container, "Jane Doe"));
+      expect(day.length).toBeGreaterThan(1);
+      expect(day.filter((m) => m.getAttribute("role") === "img")).toHaveLength(1);
+      expect(day.filter((m) => m.getAttribute("aria-hidden") === "true")).toHaveLength(day.length - 1);
+      expect(new Set(day.map((m) => m.getAttribute("title"))).size).toBe(1);
+    });
+
+    it("marks a whole-day cell once", () => {
+      const { container } = renderRoster({
+        ...sre,
+        assignments: [assignment({ name: "Jane Doe", userId: JANE, rotaDate: "2026-09-21", shiftCode: TZ1.code, zoneCode: "TZ1", teamKey: "delta" })],
+      });
+      expect(marks(rowOf(container, "Jane Doe"))).toHaveLength(1);
+      expect(rowOf(container, "Jane Doe").querySelector("td.zwhole .engmk")).not.toBeNull();
+    });
   });
 });

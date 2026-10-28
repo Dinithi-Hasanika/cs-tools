@@ -37,6 +37,11 @@ export interface AsyncEntitySelectProps<T> {
   id: string;
   label: string;
   placeholder?: string;
+  /**
+   * Keeps the label above the field even while it is empty, so the placeholder
+   * shows (e.g. a bulk edit's "No change", beside selects that read the same way).
+   */
+  shrinkLabel?: boolean;
   /** Selected entity id ("" when none). */
   value: string;
   /** Called with the selected entity id, plus (when available) the full
@@ -82,6 +87,9 @@ export interface AsyncEntitySelectProps<T> {
    * not repeated among the search results below it. Picking it reports its id,
    * with `item` only when the same entity is also among the current results. */
   pinnedOption?: AsyncEntitySelectPinnedOption | null;
+  /** Hides the clear (x) button, for a field that can be changed but never
+   * emptied (e.g. the backend has no way to unset it). */
+  hideClearButton?: boolean;
 }
 
 /**
@@ -97,6 +105,7 @@ export default function AsyncEntitySelect<T>({
   id,
   label,
   placeholder,
+  shrinkLabel = false,
   value,
   onChange,
   disabled,
@@ -110,6 +119,7 @@ export default function AsyncEntitySelect<T>({
   excludeIds,
   error,
   pinnedOption,
+  hideClearButton,
 }: AsyncEntitySelectProps<T>): JSX.Element {
   const [searchTerm, setSearchTerm] = useState("");
   const [open, setOpen] = useState(false);
@@ -198,7 +208,13 @@ export default function AsyncEntitySelect<T>({
           : undefined
       }
       isOptionEqualToValue={(opt, val) => opt.id === val.id}
-      onChange={(_event, next) => {
+      slotProps={
+        hideClearButton ? { clearIndicator: { sx: { display: "none" } } } : undefined
+      }
+      onChange={(_event, next, reason) => {
+        // Emptying the text box also reports "clear"; with hideClearButton the
+        // value is never emptied, so ignore it (the controlled value stays).
+        if (hideClearButton && reason === "clear") return;
         setPicked(next);
         const matched = next ? items.find((item) => getId(item) === next.id) : undefined;
         onChange(next ? next.id : "", matched);
@@ -220,6 +236,7 @@ export default function AsyncEntitySelect<T>({
         <TextField
           {...params}
           label={label}
+          slotProps={shrinkLabel ? { inputLabel: { ...params.InputLabelProps, shrink: true } } : undefined}
           required={required}
           placeholder={value ? undefined : placeholder}
           error={isError || !!error}

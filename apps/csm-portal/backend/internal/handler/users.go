@@ -25,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
@@ -150,7 +151,9 @@ type userMeResponse struct {
 	// caller's token roles grant: several are possible. It is not the entity
 	// service's role data, which this response no longer carries. Always
 	// present, [] when they hold none.
-	Roles       []string          `json:"roles"`
+	Roles []string `json:"roles"`
+	// PhoneNumber is the phone on the caller's platform user record. It is never
+	// read from the identity provider. Omitted when the record has none.
 	PhoneNumber *string           `json:"phoneNumber,omitempty"`
 	Team        *userTeamResponse `json:"team"`
 	// SftpgoAttachmentStorageEnabled mirrors the backend's
@@ -189,6 +192,9 @@ type entityUserMeResponse struct {
 	FirstName *string `json:"firstName"`
 	LastName  string  `json:"lastName"`
 	TimeZone  *string `json:"timeZone"`
+	// Phone is "user".phone; the entity service omits it when NULL. It is the
+	// source of GET /users/me phoneNumber.
+	Phone *string `json:"phone"`
 	// Groups is every group the caller belongs to, or absent when the upstream
 	// membership lookup failed. The team is derived from it here rather than
 	// upstream, since the registry lives in this service.
@@ -208,8 +214,9 @@ type userUpdateResponse struct {
 }
 
 // GetMe handles GET /users/me.
-// id, firstName, lastName, timeZone, and roles are sourced from the entity service.
-// phoneNumber is sourced from SCIM.
+// id, firstName, lastName, timeZone, and phoneNumber (the platform user record's
+// phone) are sourced from the entity service; roles from the caller's token. The
+// phone saved with the identity provider is never read.
 func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -246,6 +253,14 @@ func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, ErrMsgForbidden)
 				return
 			}
+			// A cs_engineer caller with no user row yet gets one created here,
+			// on the spot, from SCIM -- see provisionCsEngineerUser's own doc
+			// comment. Best-effort: a failure falls through to the existing
+			// token-only answer below, same as every other caller.
+			if slices.Contains(resp.Roles, "cs_engineer") && h.provisionCsEngineerUser(r.Context(), user, &resp) {
+				writeJSONValue(w, http.StatusOK, resp)
+				return
+			}
 			// The caller holds portal roles via the token but has no user row:
 			// answer from the token. Entity-sourced fields (id, timeZone,
 			// team) stay null.
@@ -255,7 +270,6 @@ func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 			if user.LastName != "" {
 				resp.LastName = &user.LastName
 			}
-			h.fillPhoneNumber(r.Context(), user, &resp)
 			writeJSONValue(w, http.StatusOK, resp)
 			return
 		}
@@ -272,28 +286,105 @@ func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		resp.FirstName = entityResp.FirstName
 		resp.LastName = &entityResp.LastName
 		resp.TimeZone = entityResp.TimeZone
+		resp.PhoneNumber = entityResp.Phone
 		resp.Team = h.teamForGroups(entityResp.Groups)
 	}
 
-	h.fillPhoneNumber(r.Context(), user, &resp)
 	writeJSONValue(w, http.StatusOK, resp)
 }
 
-// fillPhoneNumber sets resp.PhoneNumber from SCIM, best-effort.
-func (h *UsersHandler) fillPhoneNumber(ctx context.Context, user *middleware.UserInfo, resp *userMeResponse) {
-	scimInfo, err := h.scim.SearchUser(ctx, user.Email)
-	if err != nil {
-		slog.ErrorContext(ctx, "scim SearchUser failed", "userID", user.UserID, "err", err)
-	} else if scimInfo == nil {
-		slog.WarnContext(ctx, "no SCIM user found", "userID", user.UserID)
-	} else {
-		resp.PhoneNumber = scimInfo.PhoneNumber
+// csEngineerLastNameMarker is appended to the token-sourced last name when
+// auto-provisioning a cs_engineer caller's "user" row via
+// provisionCsEngineerUser, flagging a row created this way rather than
+// through the admin Add User flow or a human-entered profile.
+const csEngineerLastNameMarker = "Ⓦ"
+
+// withCsEngineerLastNameMarker appends csEngineerLastNameMarker to lastName,
+// space-separated -- or returns the bare marker if lastName is empty (the
+// token carried no family_name claim).
+func withCsEngineerLastNameMarker(lastName string) string {
+	lastName = strings.TrimSpace(lastName)
+	if lastName == "" {
+		return csEngineerLastNameMarker
 	}
+	return lastName + " " + csEngineerLastNameMarker
+}
+
+// provisionCsEngineerUser creates a "user" row, on the spot, for a caller who
+// holds the cs_engineer role via their token (GetMe's 404 branch already
+// confirmed this) but has no entity-service user row yet. Sources
+// firstName/lastName/phone straight off the caller's own validated token
+// (middleware.UserInfo -- given_name/family_name/phone_number claims), the
+// same token-only posture ensureUserProvisioned (cases.go) already takes, and
+// marks the created name by appending csEngineerLastNameMarker to the last
+// name, so a row created this way is identifiable later. No SCIM call is
+// made here at all -- unlike the admin Add User flow (CreateUser below),
+// which has no token for the person it's creating and so has to look them up
+// in SCIM by email instead, this caller IS the person being provisioned, so
+// their own token already has everything needed.
+//
+// Best-effort end to end: any failure is logged and reported as not
+// provisioned (false), so GetMe falls back to its existing token-only
+// answer rather than failing the request outright.
+func (h *UsersHandler) provisionCsEngineerUser(ctx context.Context, user *middleware.UserInfo, resp *userMeResponse) bool {
+	firstName := strings.TrimSpace(user.FirstName)
+	lastName := withCsEngineerLastNameMarker(user.LastName)
+
+	body, err := json.Marshal(struct {
+		FirstName string   `json:"firstName"`
+		LastName  string   `json:"lastName"`
+		Email     string   `json:"email"`
+		Roles     []string `json:"roles"`
+	}{
+		FirstName: firstName,
+		LastName:  lastName,
+		Email:     user.Email,
+		Roles:     []string{"internal"},
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "provisionCsEngineerUser: marshal create-user request failed", "userID", user.UserID, "err", err)
+		return false
+	}
+
+	raw, err := h.entity.CreateUser(ctx, body)
+	if err != nil {
+		slog.ErrorContext(ctx, "provisionCsEngineerUser: entity CreateUser failed", "userID", user.UserID, "err", err)
+		return false
+	}
+
+	var created entityUserMeResponse
+	if err := json.Unmarshal(raw, &created); err != nil {
+		slog.ErrorContext(ctx, "provisionCsEngineerUser: parse create-user response failed", "userID", user.UserID, "err", err)
+		return false
+	}
+
+	// entity-service's own POST /users has no phone field (see "Creating a
+	// user" in this backend's CLAUDE.md) -- phone can only be set afterward,
+	// via PATCH /users/{id}. Best-effort: the user already exists by this
+	// point, so a failed phone patch must not undo the create.
+	phone := strings.TrimSpace(user.PhoneNumber)
+	if phone != "" && created.ID != "" {
+		patchBody, err := json.Marshal(map[string]string{"phone": phone})
+		if err != nil {
+			slog.ErrorContext(ctx, "provisionCsEngineerUser: marshal phone patch failed", "userID", user.UserID, "err", err)
+		} else if _, err := h.entity.UpdateUser(ctx, created.ID, patchBody); err != nil {
+			slog.ErrorContext(ctx, "provisionCsEngineerUser: entity UpdateUser (phone) failed", "userID", user.UserID, "err", err)
+		}
+	}
+
+	resp.ID = &created.ID
+	resp.FirstName = &firstName
+	resp.LastName = &lastName
+	if phone != "" {
+		resp.PhoneNumber = &phone
+	}
+	return true
 }
 
 // PatchMe handles PATCH /users/me.
-// phoneNumber is updated via SCIM and then mirrored to the entity service; timeZone is updated
-// via the entity service. A request carrying both makes one entity call.
+// phoneNumber and timeZone are both written to the platform user record through the
+// entity service, in one call when a request carries both. The identity provider is
+// never written.
 func (h *UsersHandler) PatchMe(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -329,7 +420,7 @@ func (h *UsersHandler) PatchMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Entity treats an empty timeZone as absent, so reject it up front rather than
-	// report a value that was never stored. Must precede the identity provider call.
+	// report a value that was never stored.
 	if payload.TimeZone != nil && strings.TrimSpace(*payload.TimeZone) == "" {
 		writeError(w, http.StatusBadRequest, "timeZone must not be empty.")
 		return
@@ -337,27 +428,15 @@ func (h *UsersHandler) PatchMe(w http.ResponseWriter, r *http.Request) {
 
 	resp := userUpdateResponse{}
 
-	if payload.PhoneNumber != nil {
-		updatedPhone, err := h.scim.UpdateUserPhone(r.Context(), user.UserID, *payload.PhoneNumber)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "scim UpdateUserPhone failed", "userID", user.UserID, "err", err)
-			mapUpstreamError(w, err, "Failed to update phone number.")
-			return
-		}
-		resp.PhoneNumber = updatedPhone
-	}
-
-	// Mirror into the platform database with one entity PATCH carrying only the
-	// fields this request changed. SCIM has already succeeded; it is idempotent,
-	// so a client retry after an entity failure is safe.
+	// One entity PATCH carrying only the fields this request changed.
 	entityFields := map[string]string{}
+	var phone *string
 	if payload.PhoneNumber != nil {
-		// Store what the identity provider actually kept, falling back to the request.
-		stored := *payload.PhoneNumber
-		if resp.PhoneNumber != nil {
-			stored = *resp.PhoneNumber
-		}
-		entityFields["phone"] = stored
+		// Trimmed here, so the stored and echoed value is what was meant. A
+		// blank phone becomes "" and clears it, as an empty one always has.
+		trimmed := strings.TrimSpace(*payload.PhoneNumber)
+		phone = &trimmed
+		entityFields["phone"] = trimmed
 	}
 	if payload.TimeZone != nil {
 		entityFields["timeZone"] = *payload.TimeZone
@@ -381,6 +460,7 @@ func (h *UsersHandler) PatchMe(w http.ResponseWriter, r *http.Request) {
 			mapUpstreamError(w, entityErr, errMsg)
 			return
 		}
+		resp.PhoneNumber = phone
 		resp.TimeZone = payload.TimeZone
 	}
 
@@ -666,6 +746,16 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "creating an external-type user is not available at this time")
 		return
 	}
+	// A portal (Asgardeo) role only ever resolves for a wso2.com account (see
+	// withPortalRoles' own isWso2Email gate on the read side) -- granting one
+	// to a non-wso2.com target via grantRoles would add them to a SCIM role in
+	// the wrong org with no way for this portal to ever display or act on it
+	// again. Checked up front, before anything is created, so the mistake is
+	// caught with a clear 400 instead of a silent no-op grant.
+	if len(req.GrantRoles) > 0 && !isWso2Email(req.Email) {
+		writeError(w, http.StatusBadRequest, "grantRoles can only be granted to a "+wso2EmailDomain+" account")
+		return
+	}
 
 	// Resolved up front, before anything is created, so an unknown grantRoles
 	// key fails fast with a 400 rather than after the entity service user
@@ -678,6 +768,33 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		roleIDsToGrant = append(roleIDsToGrant, id)
+	}
+
+	// The Add User form only collects an email -- when the caller sent no
+	// name at all, fill firstName/lastName/phone from a SCIM search by that
+	// email instead of asking for them, the same mechanism
+	// provisionCsEngineerUser already uses for the cs_engineer auto-create
+	// path. A caller that DOES send a name (any other API consumer) is left
+	// exactly as before -- this only fires for the email-only case.
+	var scimPhone *string
+	if strings.TrimSpace(req.FirstName) == "" && strings.TrimSpace(req.LastName) == "" {
+		scimInfo, err := h.scim.SearchUser(r.Context(), req.Email)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "CreateUser: scim SearchUser failed", "userID", user.UserID, "err", err)
+			writeError(w, http.StatusBadRequest, "Could not look up this email in the identity provider. Please try again or provide a name.")
+			return
+		}
+		if scimInfo == nil {
+			writeError(w, http.StatusBadRequest, "No matching user was found in the identity provider for this email. Please verify the email address.")
+			return
+		}
+		req.FirstName = strings.TrimSpace(scimInfo.FirstName)
+		req.LastName = strings.TrimSpace(scimInfo.LastName)
+		if req.FirstName == "" && req.LastName == "" {
+			writeError(w, http.StatusBadRequest, "The identity provider has no name on file for this email. Please provide a first or last name.")
+			return
+		}
+		scimPhone = scimInfo.PhoneNumber
 	}
 
 	entityBody, err := buildEntityCreateUserBody(req)
@@ -694,6 +811,24 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// entity-service's own POST /users has no phone field (see "Creating a
+	// user" in this backend's CLAUDE.md), so a SCIM-sourced phone number is
+	// set with a second, best-effort call -- the user already exists by this
+	// point, so a failed phone patch must not undo the create.
+	if scimPhone != nil {
+		var created entityUserMeResponse
+		if err := json.Unmarshal(result, &created); err != nil {
+			slog.ErrorContext(r.Context(), "CreateUser: parse create-user response failed", "userID", user.UserID, "err", err)
+		} else if created.ID != "" {
+			patchBody, err := json.Marshal(map[string]string{"phone": *scimPhone})
+			if err != nil {
+				slog.ErrorContext(r.Context(), "CreateUser: marshal phone patch failed", "userID", user.UserID, "err", err)
+			} else if _, err := h.entity.UpdateUser(r.Context(), created.ID, patchBody); err != nil {
+				slog.ErrorContext(r.Context(), "CreateUser: entity UpdateUser (phone) failed", "userID", user.UserID, "err", err)
+			}
+		}
+	}
+
 	// Best-effort: the platform user already exists by this point, so a SCIM
 	// failure must not be reported as a failed create -- it's logged instead,
 	// the same posture ensureUserProvisioned (cases.go) takes for the
@@ -705,6 +840,144 @@ func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, result)
+}
+
+// grantUserRolesRequest is the POST /users/{id}/roles request shape -- the
+// post-creation counterpart to createUserRequest's own GrantRoles field, for
+// granting one or more portal permission roles (cs_engineer, escalator, ...)
+// to a user who already exists, rather than only at the moment a new one is
+// created. Each entry is a GrantableRole.Key, the same vocabulary GET
+// /roles/grantable reports and POST /users' own grantRoles field accepts.
+type grantUserRolesRequest struct {
+	Roles []string `json:"roles"`
+}
+
+// grantUserRolesResponse reports which of the requested roles were actually
+// granted via SCIM, and which were not -- a role can fail independently of
+// the others (e.g. one SCIM role write times out while the rest succeed), so
+// a single boolean success/failure would hide a partial result. Failed is
+// omitted entirely on full success.
+type grantUserRolesResponse struct {
+	Granted []string `json:"granted"`
+	Failed  []string `json:"failed,omitempty"`
+}
+
+// GrantUserRoles handles POST /users/{id}/roles: grants one or more portal
+// permission roles (the same vocabulary GET /roles/grantable reports) to an
+// existing platform user via SCIM. Restricted to admin via the route's
+// PermAdmin permission (cmd/server/main.go) -- the same gate POST /users'
+// own grantRoles field sits behind, since granting a role is exactly as
+// sensitive whether it happens at creation time or afterward.
+//
+// Refused with a 400 when the target's email isn't a wso2.com address (see
+// the isWso2Email check below) -- same guard CreateUser's own grantRoles
+// field has, for the same reason: a portal role is meaningless for an
+// account outside the wso2.com SCIM org, so granting one there would be a
+// silent no-op the admin would have no way to notice.
+//
+// Unlike CreateUser's own grant step, a SCIM failure here is never swallowed
+// as best-effort: granting the role is this endpoint's entire purpose, so a
+// caller that asked for it must be told whether it actually happened rather
+// than seeing a 200 that silently granted nothing. Every requested role is
+// still attempted even if an earlier one fails, so one bad role never blocks
+// the rest -- the response reports exactly which succeeded and which didn't
+// (200 if all granted, 502 if none did, 207 Multi-Status for a mixed result).
+func (h *UsersHandler) GrantUserRoles(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req grantUserRolesRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	if len(req.Roles) == 0 {
+		writeError(w, http.StatusBadRequest, "roles must name at least one role")
+		return
+	}
+
+	// Resolved up front, before the target user is even looked up, so an
+	// unknown key fails fast with a 400 -- same precedent as CreateUser's own
+	// grantRoles resolution. RoleIDForKey (not the plural RoleIDsForKey),
+	// also matching CreateUser: granting "the escalator role" means one
+	// specific real role, not every real role configured for that key.
+	roleIDs := make(map[string]string, len(req.Roles))
+	for _, key := range req.Roles {
+		roleID, ok := RoleIDForKey(h.grantableRoles, key)
+		if !ok {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("roles contains invalid value: %s", key))
+			return
+		}
+		roleIDs[key] = roleID
+	}
+
+	// SCIM grants by email, not platform user id, so the target's email has
+	// to be resolved first -- entity-service's own GetUser response already
+	// carries it (UserDetail.Email), the same field entityUserMeResponse
+	// already decodes for GetMe/CreateUser.
+	target, err := h.entity.GetUser(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "GrantUserRoles: entity GetUser failed", "userID", user.UserID, "targetID", id, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to look up the user.")
+		return
+	}
+	var targetUser entityUserMeResponse
+	if err := json.Unmarshal(target, &targetUser); err != nil || targetUser.Email == "" {
+		slog.ErrorContext(r.Context(), "GrantUserRoles: parse target user failed", "userID", user.UserID, "targetID", id, "err", err)
+		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+		return
+	}
+
+	// Same guard as CreateUser's own grantRoles field: a portal role only
+	// ever resolves for a wso2.com account (withPortalRoles' isWso2Email
+	// gate), so granting one to a non-wso2.com target would add them to a
+	// SCIM role in the wrong org with no way for this portal to ever display
+	// or act on it again.
+	if !isWso2Email(targetUser.Email) {
+		writeError(w, http.StatusBadRequest, "portal roles can only be granted to a "+wso2EmailDomain+" account")
+		return
+	}
+
+	// granted starts as a non-nil empty slice (not var granted []string) so
+	// json.Marshal writes "granted":[] rather than "granted":null on a total
+	// failure -- openapi.yaml declares it a required array with no "nullable",
+	// and a client that iterates it on a 502 would otherwise get null. failed
+	// stays nil on purpose: its own omitempty tag then drops it entirely on a
+	// full success, matching the schema's "omitted on full success" contract.
+	granted := []string{}
+	var failed []string
+	for _, key := range req.Roles {
+		if err := h.scim.AddRoleMembers(r.Context(), roleIDs[key], []string{targetUser.Email}); err != nil {
+			slog.ErrorContext(r.Context(), "GrantUserRoles: scim AddRoleMembers failed", "userID", user.UserID, "targetID", id, "role", key, "err", err)
+			failed = append(failed, key)
+			continue
+		}
+		granted = append(granted, key)
+	}
+
+	resp := grantUserRolesResponse{Granted: granted, Failed: failed}
+	switch {
+	case len(failed) == 0:
+		writeJSONValue(w, http.StatusOK, resp)
+	case len(granted) == 0:
+		writeJSONValue(w, http.StatusBadGateway, resp)
+	default:
+		writeJSONValue(w, http.StatusMultiStatus, resp)
+	}
 }
 
 // timeCardApproversResponse is the GET /users/time-card-approvers response shape.

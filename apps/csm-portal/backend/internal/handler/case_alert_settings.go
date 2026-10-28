@@ -110,8 +110,10 @@ func (h *CaseAlertSettingsHandler) PutCaseAlertRoom(w http.ResponseWriter, r *ht
 		return
 	}
 	var req struct {
-		Ladder   string  `json:"ladder"`
-		TeamKey  string  `json:"teamKey"`
+		Ladder  string `json:"ladder"`
+		TeamKey string `json:"teamKey"`
+		// GroupID is an SRE assignment group's own room: only its URL.
+		GroupID  string  `json:"groupId"`
 		Label    string  `json:"label"`
 		Enabled  *bool   `json:"enabled"`
 		Teamless *bool   `json:"teamless"`
@@ -123,6 +125,10 @@ func (h *CaseAlertSettingsHandler) PutCaseAlertRoom(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, "Send a ladder (CRE, SRE or SME), a label, and optionally an SRE or SME team.")
 		return
 	}
+	if req.GroupID != "" && (!uuidRe.MatchString(req.GroupID) || req.TeamKey != "") {
+		writeError(w, http.StatusBadRequest, "A group's room names one assignment group by its id, and no team.")
+		return
+	}
 	// A team's own channel: "" goes back to the ladder's. The shared room
 	// always follows the ladder, so it never has one.
 	if req.Channel != nil && (!caseAlertRoomChannels[*req.Channel] || (*req.Channel != "" && req.TeamKey == "")) {
@@ -132,6 +138,9 @@ func (h *CaseAlertSettingsHandler) PutCaseAlertRoom(w http.ResponseWriter, r *ht
 	fwd := map[string]any{"ladder": req.Ladder, "label": req.Label}
 	if req.TeamKey != "" {
 		fwd["teamKey"] = req.TeamKey
+	}
+	if req.GroupID != "" {
+		fwd["groupId"] = req.GroupID
 	}
 	if req.Enabled != nil {
 		fwd["enabled"] = *req.Enabled
@@ -189,19 +198,27 @@ func (h *CaseAlertSettingsHandler) PutCaseAlertRoute(w http.ResponseWriter, r *h
 	var req struct {
 		Ladder    string `json:"ladder"`
 		GroupName string `json:"groupName"`
-		TeamKey   string `json:"teamKey"`
-		RotaCode  string `json:"rotaCode"`
-		Enabled   *bool  `json:"enabled"`
+		// GroupID is the assignment group picked from the tab's list; sent
+		// on only when present, since an entity-service from before it
+		// refuses the field.
+		GroupID  string `json:"groupId"`
+		TeamKey  string `json:"teamKey"`
+		RotaCode string `json:"rotaCode"`
+		Enabled  *bool  `json:"enabled"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil || !caseAlertLadderRe.MatchString(req.Ladder) ||
 		strings.TrimSpace(req.GroupName) == "" || len(req.GroupName) > maxCaseAlertTextLen ||
 		(req.TeamKey == "") == (req.RotaCode == "") ||
+		(req.GroupID != "" && !uuidRe.MatchString(req.GroupID)) ||
 		(req.TeamKey != "" && !rotaTeamKeyRe.MatchString(req.TeamKey)) ||
 		(req.RotaCode != "" && !rotaTeamKeyRe.MatchString(req.RotaCode)) {
 		writeError(w, http.StatusBadRequest, "Send a ladder, a group name, and either a team or a rota.")
 		return
 	}
 	fwd := map[string]any{"ladder": req.Ladder, "groupName": req.GroupName}
+	if req.GroupID != "" {
+		fwd["groupId"] = req.GroupID
+	}
 	if req.TeamKey != "" {
 		fwd["teamKey"] = req.TeamKey
 	} else {

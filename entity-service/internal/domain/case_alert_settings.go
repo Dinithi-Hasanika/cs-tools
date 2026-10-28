@@ -47,6 +47,20 @@ type CaseAlertSettings struct {
 	// RouteOptions are what a group route can be made of, so the tab offers
 	// lists instead of free text; nil for somebody who may see nothing.
 	RouteOptions *CaseAlertRouteOptions `json:"routeOptions,omitempty"`
+	// UnmappedGroups are the active SRE assignment groups (the support group
+	// of a service) that no SRE route, Team Schedule team or default group
+	// covers: their incidents' cards go to the shared SRE room until one is
+	// saved. Only for a caller who may see the SRE ladder; omitted otherwise.
+	UnmappedGroups []CaseAlertAssignmentGroup `json:"unmappedGroups,omitempty"`
+}
+
+// CaseAlertAssignmentGroup is a ServiceNow assignment group ("group" row) a
+// route or a group chat room can be for. Services are the names of the
+// services it is the support group of (route options only).
+type CaseAlertAssignmentGroup struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Services []string `json:"services,omitempty"`
 }
 
 // CaseAlertRouteOptions are the choices for a group route: the CSM Portal
@@ -57,6 +71,10 @@ type CaseAlertRouteOptions struct {
 	Groups []CaseAlertTeamOption `json:"groups"`
 	Teams  []CaseAlertTeamOption `json:"teams"`
 	Rotas  []CaseAlertRotaOption `json:"rotas"`
+	// AssignmentGroups are the active "group" rows that are the support group
+	// of a service: what an SRE incident is assigned to on create. A route
+	// for one stores its id, so a rename in ServiceNow keeps the route.
+	AssignmentGroups []CaseAlertAssignmentGroup `json:"assignmentGroups"`
 }
 
 // CaseAlertTeamOption is a team by key, name and family (CRE, SRE, SME).
@@ -94,16 +112,20 @@ type CaseAlertRevision struct {
 	AppliedMode string     `json:"appliedMode,omitempty"`
 }
 
-// CaseAlertChatRoom is one chat room. TeamKey is empty for the ladder's shared
-// room. The webhook URL itself is never sent to a browser: WebhookHint is the
-// space id and the last characters of the URL's token.
+// CaseAlertChatRoom is one chat room. TeamKey and GroupID are both empty for
+// the ladder's shared room; GroupID is set for an SRE assignment group's own
+// room (0244), GroupName then being the group's current name. The webhook URL
+// itself is never sent to a browser: WebhookHint is the space id and the last
+// characters of the URL's token.
 type CaseAlertChatRoom struct {
-	ID       string `json:"id"`
-	Ladder   string `json:"ladder"`
-	TeamKey  string `json:"teamKey,omitempty"`
-	Label    string `json:"label"`
-	Enabled  bool   `json:"enabled"`
-	Teamless bool   `json:"teamless"`
+	ID        string `json:"id"`
+	Ladder    string `json:"ladder"`
+	TeamKey   string `json:"teamKey,omitempty"`
+	GroupID   string `json:"groupId,omitempty"`
+	GroupName string `json:"groupName,omitempty"`
+	Label     string `json:"label"`
+	Enabled   bool   `json:"enabled"`
+	Teamless  bool   `json:"teamless"`
 	// Channel is how a team room's alerts go out (chat, call, both, log);
 	// empty is the ladder's channel. Never more than the ladder's.
 	Channel        string     `json:"channel,omitempty"`
@@ -121,9 +143,12 @@ type CaseAlertChatRoom struct {
 // incident's assignment group, by name) to a Team Schedule team, or (SRE) to a
 // default rota. Exactly one of TeamKey and RotaCode is set.
 type CaseAlertGroupRoute struct {
-	ID        string    `json:"id"`
-	Ladder    string    `json:"ladder"`
-	GroupName string    `json:"groupName"`
+	ID        string `json:"id"`
+	Ladder    string `json:"ladder"`
+	GroupName string `json:"groupName"`
+	// GroupID is the "group" row the route is for, when it was saved for
+	// one; GroupName is then that group's current name.
+	GroupID   string    `json:"groupId,omitempty"`
 	TeamKey   string    `json:"teamKey,omitempty"`
 	RotaCode  string    `json:"rotaCode,omitempty"`
 	Enabled   bool      `json:"enabled"`
@@ -132,10 +157,14 @@ type CaseAlertGroupRoute struct {
 }
 
 // SaveCaseAlertRoomRequest creates or changes the room of one scope: a
-// ladder's shared room (no teamKey) or an SRE team's room.
+// ladder's shared room (no teamKey or groupId), an SRE or SME team's room, or
+// an SRE assignment group's room (groupId, one of the route options'
+// assignment groups). Label may be left out for a group's room: the group's
+// own name is used.
 type SaveCaseAlertRoomRequest struct {
 	Ladder   string `json:"ladder"`
 	TeamKey  string `json:"teamKey,omitempty"`
+	GroupID  string `json:"groupId,omitempty"`
 	Label    string `json:"label"`
 	Enabled  *bool  `json:"enabled,omitempty"`
 	Teamless *bool  `json:"teamless,omitempty"`
@@ -154,9 +183,12 @@ type SetCaseAlertWebhookRequest struct {
 type SaveCaseAlertRouteRequest struct {
 	Ladder    string `json:"ladder"`
 	GroupName string `json:"groupName"`
-	TeamKey   string `json:"teamKey,omitempty"`
-	RotaCode  string `json:"rotaCode,omitempty"`
-	Enabled   *bool  `json:"enabled,omitempty"`
+	// GroupID picks the assignment group by its "group" row instead of by
+	// name; groupName may then be left out, and the group's own name is used.
+	GroupID  string `json:"groupId,omitempty"`
+	TeamKey  string `json:"teamKey,omitempty"`
+	RotaCode string `json:"rotaCode,omitempty"`
+	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
 // CaseAlertTestCardResponse is a test card's outcome: delivered or failed.
@@ -200,6 +232,16 @@ type CaseAlertRunning struct {
 	// channel, safety caps (allowed numbers counted, never listed) and where
 	// phone numbers come from. Shown read-only.
 	FileOnly map[string]map[string]json.RawMessage `json:"fileOnly,omitempty"`
+	// Channels is, per ladder, whether it runs, its channel, and for each SRE
+	// and SME team the channel it actually uses (the ladder's narrowed by the
+	// team's own) and whether it has a room. Passed on as the alert service
+	// reported it, filtered to the caller's families.
+	Channels map[string]json.RawMessage `json:"channels,omitempty"`
+	// Groups is, per ladder, how an assignment group reaches a team as the
+	// alert service runs (its file and the saved routes together): aliases
+	// (group -> team key), default groups (no team of their own) and the rooms
+	// such a group's cards go to. Passed on as reported, filtered by family.
+	Groups map[string]json.RawMessage `json:"groups,omitempty"`
 }
 
 // CaseAlertRunningValue is one setting as the alert service runs it. Source
@@ -227,11 +269,15 @@ type CaseAlertRuntimeValue struct {
 }
 
 // CaseAlertRuntimeRoom is an enabled room with its webhook URL opened.
+// GroupName is set for an SRE assignment group's room: the group's current
+// name, which the alert service matches an incident's group against.
 type CaseAlertRuntimeRoom struct {
-	Ladder   string `json:"ladder"`
-	TeamKey  string `json:"teamKey,omitempty"`
-	Label    string `json:"label"`
-	Teamless bool   `json:"teamless"`
+	Ladder    string `json:"ladder"`
+	TeamKey   string `json:"teamKey,omitempty"`
+	GroupID   string `json:"groupId,omitempty"`
+	GroupName string `json:"groupName,omitempty"`
+	Label     string `json:"label"`
+	Teamless  bool   `json:"teamless"`
 	// WebhookURL is empty for a team room saved only for its channel.
 	WebhookURL string `json:"webhookUrl"`
 	Channel    string `json:"channel,omitempty"`

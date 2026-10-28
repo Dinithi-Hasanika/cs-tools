@@ -79,6 +79,32 @@ func TestUserService_GetMe_ResolvesCallerFromToken(t *testing.T) {
 	}
 }
 
+// TestUserService_GetMe_PopulatesUserType proves GetMe carries through
+// GetUserByEmail's own already-resolved UserType -- a real, reported bug
+// had this field always left at its zero value on the Postgres data source
+// regardless of the caller's actual classification, which meant a caller
+// like apps/customer-portal/backend-v2's internal-write-group gate (keyed
+// on this exact field) could never recognize an INTERNAL-type user at all.
+func TestUserService_GetMe_PopulatesUserType(t *testing.T) {
+	for _, userType := range []domain.UserType{domain.UserTypeInternal, domain.UserTypeCustomer, ""} {
+		t.Run(string(userType), func(t *testing.T) {
+			repo := stubUserRepo{
+				getUserByEmail: func(_ context.Context, email string) (domain.User, error) {
+					return domain.User{ID: "11111111-1111-1111-1111-111111111111", Email: email, UserType: userType}, nil
+				},
+			}
+			svc := NewUserService(repo, nil)
+			resp, err := svc.GetMe(contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com")))
+			if err != nil {
+				t.Fatalf("GetMe returned error: %v", err)
+			}
+			if resp.UserType != userType {
+				t.Errorf("UserType = %q, want %q", resp.UserType, userType)
+			}
+		})
+	}
+}
+
 // TestUserService_GetMe_Phone proves the user's phone is passed through to the
 // response and serialised as "phone", and that a NULL phone is omitted.
 func TestUserService_GetMe_Phone(t *testing.T) {
@@ -505,6 +531,59 @@ func TestUserService_GetUser(t *testing.T) {
 		}
 		if lookedUp != "cy@customer.example" || len(got.ProjectAccess) != 1 || !got.ProjectAccess[0].GrantsCaseAccess {
 			t.Errorf("lookedUp=%q got=%+v", lookedUp, got.ProjectAccess)
+		}
+	})
+
+	t.Run("system user (customer-side shared account) also gets project access", func(t *testing.T) {
+		system := domain.UserDetail{ID: userDetailTestID, Name: "Shared Account", Email: "shared@customer.example", UserType: domain.UserTypeSystem, Active: true}
+		var lookedUp string
+		repo := stubUserRepo{
+			getUserDetail: func(context.Context, string) (domain.UserDetail, error) { return system, nil },
+			getUserProjectAccess: func(_ context.Context, email string) ([]domain.UserContactAccess, error) {
+				lookedUp = email
+				return access, nil
+			},
+		}
+		got, err := NewUserService(repo, nil).GetUser(context.Background(), userDetailTestID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lookedUp != "shared@customer.example" || len(got.ProjectAccess) != 1 || got.ProjectAccess[0].ProjectID != "p1" {
+			t.Errorf("lookedUp=%q got=%+v", lookedUp, got.ProjectAccess)
+		}
+	})
+
+	t.Run("user with no type set is treated as non-staff and gets project access", func(t *testing.T) {
+		untyped := domain.UserDetail{ID: userDetailTestID, Name: "Un Typed", Email: "untyped@customer.example", Active: true}
+		called := false
+		repo := stubUserRepo{
+			getUserDetail: func(context.Context, string) (domain.UserDetail, error) { return untyped, nil },
+			getUserProjectAccess: func(context.Context, string) ([]domain.UserContactAccess, error) {
+				called = true
+				return access, nil
+			},
+		}
+		got, err := NewUserService(repo, nil).GetUser(context.Background(), userDetailTestID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !called || len(got.ProjectAccess) != 1 {
+			t.Errorf("called=%v got=%+v", called, got.ProjectAccess)
+		}
+	})
+
+	t.Run("non-staff user without an email skips the project access lookup", func(t *testing.T) {
+		noEmail := domain.UserDetail{ID: userDetailTestID, Name: "Shared Account", UserType: domain.UserTypeSystem, Active: true}
+		repo := stubUserRepo{
+			getUserDetail: func(context.Context, string) (domain.UserDetail, error) { return noEmail, nil },
+			// getUserProjectAccess left nil: calling it panics, proving it is skipped.
+		}
+		got, err := NewUserService(repo, nil).GetUser(context.Background(), userDetailTestID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ProjectAccess != nil {
+			t.Errorf("got %+v", got.ProjectAccess)
 		}
 	})
 

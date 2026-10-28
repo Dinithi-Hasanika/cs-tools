@@ -20,10 +20,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 )
 
@@ -47,6 +51,27 @@ type RotaAccessRepository interface {
 	// GrantRotaMarker and RevokeRotaMarker are the same for one team.
 	GrantRotaMarker(ctx context.Context, userID, teamKey, actorEmail string) (bool, error)
 	RevokeRotaMarker(ctx context.Context, userID, teamKey, actorEmail string) (bool, error)
+
+	// AddTeamMember puts the user on the team as an engineer, reporting
+	// whether they were not on it already.
+	AddTeamMember(ctx context.Context, userID, teamKey, actorEmail string) (bool, error)
+	// RemoveTeamMember takes the user off the team, and their rota marker
+	// grant for it with them, unless something keeps them on it: a lead
+	// role (when allowLead is false), a Case Alerts responder tier, or turns
+	// on the team that have not ended. Nothing is written when one does;
+	// the result says which.
+	RemoveTeamMember(ctx context.Context, userID, teamKey, actorEmail string, allowLead bool) (domain.TeamMemberRemoval, error)
+
+	// UpdateTeamMember changes the person's role (engineer or sub_lead) and/or
+	// Case Alerts tier on the team. Nothing is written when they are not on
+	// the team, hold a lead-type role, or the tier is another member's; the
+	// result says which.
+	UpdateTeamMember(ctx context.Context, userID, teamKey, actorEmail string, patch domain.TeamMemberPatch) (domain.TeamMemberUpdate, error)
+	// MoveTeamMember takes the person off fromTeamKey and puts them on
+	// toTeamKey, in one transaction, under the same refusals as
+	// RemoveTeamMember (and never a lead). Nothing is written when one
+	// applies; the result says which.
+	MoveTeamMember(ctx context.Context, userID, fromTeamKey, toTeamKey, actorEmail string) (domain.TeamMemberMove, error)
 
 	// UserIsInternal is whether the user exists and is internal staff.
 	UserIsInternal(ctx context.Context, userID string) (bool, error)
@@ -213,6 +238,354 @@ func (r *rotaAccessRepository) RevokeRotaMarker(ctx context.Context, userID, tea
 		return nil
 	})
 	return removed, err
+}
+
+// AddTeamMember implements RotaAccessRepository.
+//
+// team_member has no unique key on (team, user), so "not already on it" is
+// asked in the insert itself, under a lock on the team row so two adds of
+// the same person cannot both see "not there". The id is given, not left
+// to the column default, which not every database has (migration 0179).
+func (r *rotaAccessRepository) AddTeamMember(ctx context.Context, userID, teamKey, actorEmail string) (bool, error) {
+	var added bool
+	err := r.inTx(ctx, actorEmail, func(tx pgx.Tx) error {
+		var teamID string
+		err := tx.QueryRow(ctx, `SELECT id::text FROM team WHERE key = lower($1) FOR UPDATE`, teamKey).Scan(&teamID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &apierror.NotFoundError{Msg: fmt.Sprintf("%s is not a team on the schedule", teamKey)}
+		}
+		if err != nil {
+			return fmt.Errorf("lock team: %w", err)
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO team_member (id, created_on, updated_on, created_by, updated_by, team_id, user_id, role)
+			SELECT gen_random_uuid(), NOW(), NOW(), $3, $3, $2::uuid, $1::uuid, 'engineer'
+			 WHERE NOT EXISTS (SELECT 1 FROM team_member m WHERE m.team_id = $2::uuid AND m.user_id = $1::uuid)`,
+			userID, teamID, actorEmail)
+		if err != nil {
+			return fmt.Errorf("add team member: %w", err)
+		}
+		added = tag.RowsAffected() > 0
+		return nil
+	})
+	return added, err
+}
+
+// leadRoles are the membership roles a rota admin may not take off a team:
+// each one is a rung of the Case Alerts ladders, so removing it changes who
+// is called.
+var leadRoles = []string{"lead", "sub_lead", "americas_team_lead", "cre_head", "cs_head"}
+
+// RemoveTeamMember implements RotaAccessRepository.
+//
+// The person's membership rows are locked first, then everything that keeps
+// them on the team is read under that lock, and the rows are deleted only
+// when nothing does -- so a turn or a tier added at the same moment cannot
+// slip past the check. Turns are counted by ends_at, so one under way counts.
+func (r *rotaAccessRepository) RemoveTeamMember(ctx context.Context, userID, teamKey, actorEmail string, allowLead bool) (domain.TeamMemberRemoval, error) {
+	var out domain.TeamMemberRemoval
+	err := r.inTx(ctx, actorEmail, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT m.role, COALESCE(m.alert_tier, '')
+			  FROM team_member m JOIN team t ON t.id = m.team_id
+			 WHERE t.key = lower($2) AND m.user_id = $1::uuid
+			 ORDER BY m.id
+			   FOR UPDATE OF m`, userID, teamKey)
+		if err != nil {
+			return fmt.Errorf("lock team membership: %w", err)
+		}
+		var lead bool
+		for rows.Next() {
+			var role, tier string
+			if err := rows.Scan(&role, &tier); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan team membership: %w", err)
+			}
+			out.Member = true
+			if out.Role == "" || slices.Contains(leadRoles, role) {
+				out.Role = role
+			}
+			if slices.Contains(leadRoles, role) {
+				lead = true
+			}
+			if tier != "" {
+				out.AlertTier = tier
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("read team membership: %w", err)
+		}
+		if !out.Member {
+			return nil
+		}
+		if err := tx.QueryRow(ctx, `
+			SELECT COUNT(*) FROM team_schedule_assignment
+			 WHERE user_id = $1::uuid AND team_key = lower($2) AND ends_at > NOW()`,
+			userID, teamKey).Scan(&out.UpcomingTurns); err != nil {
+			return fmt.Errorf("count upcoming turns: %w", err)
+		}
+		if (lead && !allowLead) || out.AlertTier != "" || out.UpcomingTurns > 0 {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM team_member m USING team t
+			 WHERE t.id = m.team_id AND t.key = lower($2) AND m.user_id = $1::uuid`, userID, teamKey); err != nil {
+			return fmt.Errorf("remove team member: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM team_schedule_rota_marker WHERE user_id = $1::uuid AND team_key = lower($2)`,
+			userID, teamKey); err != nil {
+			return fmt.Errorf("remove the rota marker of a team member: %w", err)
+		}
+		out.Removed = true
+		return nil
+	})
+	return out, err
+}
+
+// leadTypeRoles are the roles that make someone a lead of a team: each is a
+// rung the Case Alerts ladders call, and none carries a responder tier
+// (team_member_alert_tier_not_lead). They are never given or taken here.
+// sub_lead is not one: it is a rank an engineer is moved to and from.
+var leadTypeRoles = []string{"lead", "americas_team_lead", "cre_head", "cs_head"}
+
+// UpdateTeamMember implements RotaAccessRepository.
+//
+// The team row is locked first (the same first lock as AddTeamMember and
+// MoveTeamMember, so two writers always meet there), then the person's
+// membership rows. A tier has one holder per team (unique index
+// team_member_alert_tier_unique), which is checked under the lock so the
+// refusal names the holder instead of surfacing as a constraint error. The
+// tier lives on one row only, should duplicate membership rows exist.
+func (r *rotaAccessRepository) UpdateTeamMember(ctx context.Context, userID, teamKey, actorEmail string, patch domain.TeamMemberPatch) (domain.TeamMemberUpdate, error) {
+	var out domain.TeamMemberUpdate
+	err := r.inTx(ctx, actorEmail, func(tx pgx.Tx) error {
+		var teamID, key string
+		err := tx.QueryRow(ctx, `SELECT id::text, key FROM team WHERE key = lower($1) FOR UPDATE`, teamKey).Scan(&teamID, &key)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &apierror.NotFoundError{Msg: fmt.Sprintf("%s is not a team on the schedule", teamKey)}
+		}
+		if err != nil {
+			return fmt.Errorf("lock team: %w", err)
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT id::text, role, COALESCE(alert_tier, '')
+			  FROM team_member
+			 WHERE team_id = $1::uuid AND user_id = $2::uuid
+			 ORDER BY id
+			   FOR UPDATE`, teamID, userID)
+		if err != nil {
+			return fmt.Errorf("lock team membership: %w", err)
+		}
+		var firstID, role, tier string
+		changed := false
+		for rows.Next() {
+			var id, rRole, rTier string
+			if err := rows.Scan(&id, &rRole, &rTier); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan team membership: %w", err)
+			}
+			if slices.Contains(leadTypeRoles, rRole) {
+				out.Lead = true
+			}
+			if !out.Member {
+				firstID, role = id, rRole
+			} else if rRole != role {
+				changed = true // duplicate rows that disagree are brought into line
+			}
+			out.Member = true
+			if rTier != "" {
+				if tier != "" && rTier != tier {
+					changed = true
+				}
+				tier = rTier
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("read team membership: %w", err)
+		}
+		if !out.Member || out.Lead {
+			return nil
+		}
+		if patch.Role != nil && *patch.Role != role {
+			role, changed = *patch.Role, true
+		}
+		if patch.AlertTierSet {
+			want := ""
+			if patch.AlertTier != nil {
+				want = *patch.AlertTier
+			}
+			if want != tier {
+				tier, changed = want, true
+			}
+		}
+		if tier != "" {
+			err := tx.QueryRow(ctx, `
+				SELECT user_id::text FROM team_member
+				 WHERE team_id = $1::uuid AND alert_tier = $2 AND user_id <> $3::uuid
+				 LIMIT 1`, teamID, tier, userID).Scan(&out.TierHolder)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("find the holder of the tier: %w", err)
+			}
+			if out.TierHolder != "" {
+				return nil
+			}
+		}
+		if changed {
+			if _, err := tx.Exec(ctx, `
+				UPDATE team_member
+				   SET role = $3, alert_tier = CASE WHEN id = $4::uuid THEN NULLIF($5, '') ELSE NULL END,
+				       updated_on = NOW(), updated_by = $6
+				 WHERE team_id = $1::uuid AND user_id = $2::uuid`,
+				teamID, userID, role, firstID, tier, actorEmail); err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) && pgErr.Code == "23505" { // another writer took the tier first
+					return &apierror.ConflictError{Msg: fmt.Sprintf("tier %s of %s was just given to someone else", tier, key)}
+				}
+				return fmt.Errorf("update team member: %w", err)
+			}
+			out.Updated = true
+		}
+		out.Membership = domain.TeamMembership{TeamKey: key, UserID: userID, Role: role, AlertTier: nilIfEmpty(tier)}
+		return nil
+	})
+	return out, err
+}
+
+// MoveTeamMember implements RotaAccessRepository.
+//
+// Both team rows are locked in id order, so two moves in opposite directions
+// cannot deadlock, then the person's rows on both teams. Everything that
+// keeps them on the source team is read under those locks, and the insert on
+// the target and the delete on the source happen in the one transaction: a
+// failure of either leaves neither written. The membership arrives as the
+// same non-lead role, with no tier (a tier is one team's). When the target
+// has a group row of its own id, the new row points at it, as a group-backed
+// team's members do.
+func (r *rotaAccessRepository) MoveTeamMember(ctx context.Context, userID, fromTeamKey, toTeamKey, actorEmail string) (domain.TeamMemberMove, error) {
+	var out domain.TeamMemberMove
+	err := r.inTx(ctx, actorEmail, func(tx pgx.Tx) error {
+		trows, err := tx.Query(ctx, `
+			SELECT id::text, key FROM team WHERE key = ANY(ARRAY[lower($1), lower($2)])
+			 ORDER BY id FOR UPDATE`, fromTeamKey, toTeamKey)
+		if err != nil {
+			return fmt.Errorf("lock teams: %w", err)
+		}
+		ids := map[string]string{}
+		keys := map[string]string{}
+		for trows.Next() {
+			var id, key string
+			if err := trows.Scan(&id, &key); err != nil {
+				trows.Close()
+				return fmt.Errorf("scan team: %w", err)
+			}
+			ids[key], keys[id] = id, key
+		}
+		trows.Close()
+		if err := trows.Err(); err != nil {
+			return fmt.Errorf("read teams: %w", err)
+		}
+		fromKey, toKey := strings.ToLower(fromTeamKey), strings.ToLower(toTeamKey)
+		for _, k := range []string{fromKey, toKey} {
+			if ids[k] == "" {
+				return &apierror.NotFoundError{Msg: fmt.Sprintf("%s is not a team on the schedule", k)}
+			}
+		}
+		fromID, toID := ids[fromKey], ids[toKey]
+
+		mrows, err := tx.Query(ctx, `
+			SELECT team_id::text, role, COALESCE(alert_tier, '')
+			  FROM team_member
+			 WHERE user_id = $1::uuid AND team_id IN ($2::uuid, $3::uuid)
+			 ORDER BY team_id, id
+			   FOR UPDATE`, userID, fromID, toID)
+		if err != nil {
+			return fmt.Errorf("lock team memberships: %w", err)
+		}
+		var toRole, toTier string
+		subLead := false
+		for mrows.Next() {
+			var teamID, role, tier string
+			if err := mrows.Scan(&teamID, &role, &tier); err != nil {
+				mrows.Close()
+				return fmt.Errorf("scan team membership: %w", err)
+			}
+			if teamID == toID {
+				if !out.OnTarget {
+					toRole = role
+				}
+				out.OnTarget = true
+				if tier != "" {
+					toTier = tier
+				}
+				continue
+			}
+			out.OnSource = true
+			if out.Role == "" || slices.Contains(leadTypeRoles, role) {
+				out.Role = role
+			}
+			if slices.Contains(leadTypeRoles, role) {
+				out.Lead = true
+			}
+			if role == "sub_lead" {
+				subLead = true
+			}
+			if tier != "" {
+				out.AlertTier = tier
+			}
+		}
+		mrows.Close()
+		if err := mrows.Err(); err != nil {
+			return fmt.Errorf("read team memberships: %w", err)
+		}
+		if out.OnTarget {
+			out.Membership = domain.TeamMembership{TeamKey: toKey, UserID: userID, Role: toRole, AlertTier: nilIfEmpty(toTier)}
+		}
+		if !out.OnSource || out.OnTarget {
+			return nil // nothing to move, or already there (or both: the service refuses)
+		}
+		if err := tx.QueryRow(ctx, `
+			SELECT COUNT(*) FROM team_schedule_assignment
+			 WHERE user_id = $1::uuid AND team_key = $2 AND ends_at > NOW()`,
+			userID, fromKey).Scan(&out.UpcomingTurns); err != nil {
+			return fmt.Errorf("count upcoming turns: %w", err)
+		}
+		if out.Lead || out.AlertTier != "" || out.UpcomingTurns > 0 {
+			return nil
+		}
+		newRole := "engineer"
+		if subLead {
+			newRole = "sub_lead"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO team_member (id, created_on, updated_on, created_by, updated_by, team_id, user_id, role, group_id)
+			VALUES (gen_random_uuid(), NOW(), NOW(), $4, $4, $2::uuid, $1::uuid, $3,
+			        (SELECT g.id FROM "group" g WHERE g.id = $2::uuid))`,
+			userID, toID, newRole, actorEmail); err != nil {
+			return fmt.Errorf("add team member to the target team: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM team_member WHERE team_id = $2::uuid AND user_id = $1::uuid`, userID, fromID); err != nil {
+			return fmt.Errorf("remove team member from the source team: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM team_schedule_rota_marker WHERE user_id = $1::uuid AND team_key = $2`,
+			userID, fromKey); err != nil {
+			return fmt.Errorf("remove the rota marker of a moved team member: %w", err)
+		}
+		out.Moved = true
+		out.Membership = domain.TeamMembership{TeamKey: toKey, UserID: userID, Role: newRole}
+		return nil
+	})
+	return out, err
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // UserIsInternal implements RotaAccessRepository.

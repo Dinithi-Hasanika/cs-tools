@@ -233,7 +233,7 @@ func TestUpsertAccountContact_PrimaryFlag(t *testing.T) {
 		{match: "FROM account_contact WHERE account_id", row: noRows},
 		{match: "INSERT INTO account_contact", row: scriptedRow{vals: []any{"ac-1"}}},
 	}}
-	if _, _, err := upsertAccountContact(context.Background(), q, "003A", "acct-1", "jane@acme.com", boolPtr(true), "actor"); err != nil {
+	if _, _, err := upsertAccountContact(context.Background(), q, "003A", "acct-1", "jane@acme.com", boolPtr(true), "actor", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(q.queries[2], "COALESCE($5::boolean, FALSE)") {
@@ -243,7 +243,7 @@ func TestUpsertAccountContact_PrimaryFlag(t *testing.T) {
 	q = &scriptedQuerier{t: t, script: []scriptStep{
 		{match: "FROM account_contact ac WHERE ac.sf_id", row: scriptedRow{vals: []any{"ac-1", int64(1)}}},
 	}}
-	if _, _, err := upsertAccountContact(context.Background(), q, "003A", "acct-1", "jane@acme.com", nil, "actor"); err != nil {
+	if _, _, err := upsertAccountContact(context.Background(), q, "003A", "acct-1", "jane@acme.com", nil, "actor", ""); err != nil {
 		t.Fatal(err)
 	}
 	upd := q.execsMatching("UPDATE account_contact")
@@ -300,6 +300,20 @@ func TestDeactivateMovedAccountContacts_KeepsAccountsWithLiveMemberships(t *test
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("sweep must mention %q:\n%s", want, sql)
+		}
+	}
+}
+
+func TestDeactivateContactMemberships_DeactivatesByContactSfID(t *testing.T) {
+	q := &scriptedQuerier{t: t, execTags: map[string]string{"UPDATE project_contact": "UPDATE 3"}}
+	n, err := deactivateContactMemberships(context.Background(), q, "003A", "actor")
+	if err != nil || n != 3 {
+		t.Fatalf("n = %d, err = %v", n, err)
+	}
+	sql := q.execs[0].sql
+	for _, want := range []string{"UPDATE project_contact", "ac.sf_id = $1", "ac.id = pc.account_contact_id", "DEACTIVATED"} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("membership deactivation must mention %q:\n%s", want, sql)
 		}
 	}
 }

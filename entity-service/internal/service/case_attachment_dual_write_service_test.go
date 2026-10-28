@@ -312,6 +312,82 @@ func TestCaseAttachmentDualWriteService_CreateCaseAttachment_DeploymentSkipsPost
 	}
 }
 
+// TestCaseAttachmentDualWriteService_CreateCaseAttachment_NonCaseWorkItemsSkipPostgres
+// proves incident, change_request and conversation uploads behave like
+// deployment: mirror only, response returned unchanged, and neither the repo
+// insert nor actor resolution is reached (stubCaseRepo and stubUserRepo{}
+// both panic if touched), and a mirror error is returned as-is.
+func TestCaseAttachmentDualWriteService_CreateCaseAttachment_NonCaseWorkItemsSkipPostgres(t *testing.T) {
+	const snAttachmentID = "33333333-3333-3333-3333-333333333333"
+	mirrorErr := errors.New("mirror unavailable")
+	for _, rt := range []domain.ReferenceType{
+		domain.ReferenceTypeIncident,
+		domain.ReferenceTypeChangeRequest,
+		domain.ReferenceTypeConversation,
+	} {
+		t.Run(string(rt)+"/success", func(t *testing.T) {
+			calls := 0
+			mirror := &stubCaseAttachmentSNMirror{
+				createCaseAttachment: func(_ context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
+					calls++
+					if req.ReferenceType != rt || req.ReferenceID != testWorkItemID {
+						t.Fatalf("mirror got %q/%q", req.ReferenceType, req.ReferenceID)
+					}
+					return domain.CreateAttachmentResponse{
+						Message:    "Attachment created successfully.",
+						Attachment: domain.AttachmentDetail{ID: snAttachmentID, SizeBytes: 5, CreatedBy: "jane.doe@example.com", Status: domain.AttachmentStatusComplete},
+					}, nil
+				},
+			}
+			svc := newDualWriteAttachmentService(&stubCaseRepo{}, stubUserRepo{}, mirror, nil)
+			resp, err := svc.CreateCaseAttachment(context.Background(), domain.CreateAttachmentRequest{
+				ReferenceID: testWorkItemID, ReferenceType: rt, Name: "diagnostics.log",
+				Type: "text/plain", File: "data:text/plain;base64,aGVsbG8=",
+			})
+			if err != nil {
+				t.Fatalf("CreateCaseAttachment returned error: %v", err)
+			}
+			if calls != 1 {
+				t.Fatalf("mirror calls = %d, want 1", calls)
+			}
+			if resp.Attachment.ID != snAttachmentID || resp.Attachment.CreatedBy != "jane.doe@example.com" {
+				t.Fatalf("mirror response not returned unchanged: %+v", resp.Attachment)
+			}
+		})
+		t.Run(string(rt)+"/mirror error unchanged", func(t *testing.T) {
+			mirror := &stubCaseAttachmentSNMirror{
+				createCaseAttachment: func(context.Context, domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
+					return domain.CreateAttachmentResponse{}, mirrorErr
+				},
+			}
+			svc := newDualWriteAttachmentService(&stubCaseRepo{}, stubUserRepo{}, mirror, nil)
+			_, err := svc.CreateCaseAttachment(context.Background(), domain.CreateAttachmentRequest{
+				ReferenceID: testWorkItemID, ReferenceType: rt, Name: "diagnostics.log",
+			})
+			if err != mirrorErr {
+				t.Fatalf("err = %v, want the mirror error unchanged", err)
+			}
+		})
+	}
+}
+
+// TestCaseService_CreateCaseAttachment_PlainPostgresIncidentStillRejected pins
+// that outside dual-write mode an incident upload keeps its existing
+// "referenceType must be case" validation error.
+func TestCaseService_CreateCaseAttachment_PlainPostgresIncidentStillRejected(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, actorUserRepo(t), nil, alwaysUnrestrictedAccess{}, nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	req := validCreateAttachmentRequest()
+	req.ReferenceID = testWorkItemID
+	req.ReferenceType = domain.ReferenceTypeIncident
+
+	_, err := svc.CreateCaseAttachment(ctx, req)
+	var ve *apierror.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 // TestCaseAttachmentDualWriteService_CreateCaseAttachment_SNFailureLeavesPostgresUntouched
 // proves that when ServiceNow rejects the attachment, nothing is written to
 // Postgres at all -- stubCaseRepo panics if CreateCaseAttachmentFromServiceNow
@@ -593,5 +669,49 @@ func TestCaseAttachmentDualWriteService_SearchCaseAttachments_InheritsEmbeddedPo
 	}
 	if len(resp.Attachments) != 1 || resp.Attachments[0].ID != testAttachmentID {
 		t.Fatalf("expected the Postgres-backed result to pass through unchanged, got %+v", resp.Attachments)
+	}
+}
+
+// A change request's attachment used to come back as a 400 ("one or more
+// referenced IDs do not exist") although ServiceNow had stored it: its metadata
+// went to case_attachment, whose insert only matches case-like work items. It
+// now goes to work_item_attachment, and never to case_attachment
+// (stubCaseRepo panics on CreateCaseAttachmentFromServiceNow).
+func TestCaseAttachmentDualWriteService_CreateCaseAttachment_ChangeRequestIsRecordedInWorkItemAttachment(t *testing.T) {
+	const snAttachmentID = "44444444-4444-4444-4444-444444444444"
+	recordedOn := time.Date(2026, 10, 20, 9, 30, 0, 0, time.UTC)
+	mirror := &stubCaseAttachmentSNMirror{
+		createCaseAttachment: func(_ context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
+			return domain.CreateAttachmentResponse{
+				Message:    "Attachment created successfully.",
+				Attachment: domain.AttachmentDetail{ID: snAttachmentID, SizeBytes: 5, CreatedBy: "sn-user"},
+			}, nil
+		},
+	}
+	var gotID, gotEmail string
+	repo := &stubCaseRepo{
+		recordCRAttachmentFromSN: func(_ context.Context, req domain.CreateAttachmentRequest, id string, _ int, email string) (time.Time, error) {
+			if req.ReferenceType != domain.ReferenceTypeChangeRequest {
+				t.Fatalf("referenceType = %q", req.ReferenceType)
+			}
+			gotID, gotEmail = id, email
+			return recordedOn, nil
+		},
+	}
+	base := NewCaseService(repo, actorUserRepo(t), nil, alwaysUnrestrictedAccess{}, nil)
+	svc := NewCaseAttachmentDualWriteService(base, mirror, nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	req := validDualWriteCreateAttachmentRequest()
+	req.ReferenceType = domain.ReferenceTypeChangeRequest
+	resp, err := svc.CreateCaseAttachment(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateCaseAttachment returned error: %v", err)
+	}
+	if gotID != snAttachmentID || gotEmail != "jane.doe@example.com" {
+		t.Errorf("recorded id=%q email=%q", gotID, gotEmail)
+	}
+	if !resp.Attachment.CreatedOn.Equal(recordedOn) || resp.Attachment.CreatedBy != "jane.doe@example.com" {
+		t.Errorf("response = %+v", resp.Attachment)
 	}
 }

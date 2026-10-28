@@ -216,6 +216,8 @@ export interface SearchScheduleAssignmentsPayload {
   /** Widen the window to catch a block that began before `from` and is still
    *  running into it -- the night crew a day view shows at the top. */
   includeOvernight?: boolean;
+  /** Leave out anybody on leave that day: who a reminder would reach. */
+  excludeAbsent?: boolean;
 }
 
 export interface SearchScheduleAbsencesPayload {
@@ -233,6 +235,43 @@ export interface ScheduleAssignmentsResponse {
 
 export interface ScheduleAbsencesResponse {
   absences: ScheduleAbsence[];
+  count: number;
+}
+
+/** Body of the confirmed engagement allocations search. At most 500 user ids
+ *  and a window of at most 70 days, both ends inclusive. */
+export interface SearchEngagementAllocationsPayload {
+  userIds: string[];
+  from: string;
+  to: string;
+}
+
+/**
+ * One confirmed customer engagement allocation: an engineer given to an
+ * engagement for a run of days. Read-only on the schedule.
+ *
+ * The server omits what it does not have, so every descriptive field is
+ * optional; `engagementType` and `modeOfDelivery` are raw enum values and are
+ * turned into words by the reader (see utils/engagementAllocations).
+ */
+export interface EngagementAllocation {
+  id: string;
+  userId: string;
+  engagementId: string;
+  /** First and last day covered, YYYY-MM-DD, both inclusive. */
+  startDate: string;
+  endDate: string;
+  allocationId?: string;
+  engagementDisplayId?: string;
+  accountName?: string;
+  engagementType?: string;
+  modeOfDelivery?: string;
+  /** Percent of the engineer's time, e.g. 50. */
+  utilization?: number;
+}
+
+export interface EngagementAllocationsResponse {
+  allocations: EngagementAllocation[];
   count: number;
 }
 
@@ -296,6 +335,17 @@ export interface PagingPhone {
   lastTestStatus?: PagingTestStatus;
 }
 
+/** The number a test call rings for a person -- the one Case Alerts dials
+ *  from CSM -- and its last test. Sent only to a reader who may test it. */
+export interface PagingTestCall {
+  /** "+94•••••123" -- the only form the page shows. */
+  masked: string;
+  /** "profile": the number on their own profile; "paging": their paging-only number. */
+  source: "profile" | "paging";
+  lastTestAt?: string;
+  lastTestStatus?: PagingTestStatus;
+}
+
 /** One membership as the Case Paging tab shows it. */
 export interface PagingChainMember {
   membershipId: string;
@@ -310,11 +360,17 @@ export interface PagingChainMember {
   role: string;
   /** 1, 2 or 3 for the team's 1st, 2nd or 3rd responder (Tier 1); 0 for none. */
   responderRank: number;
-  /** Whether the reader may add, change, remove or test this person's paging number. */
+  /** Whether the reader may change or remove this person's paging number. */
   canEditPhone?: boolean;
   pagingPhone?: PagingPhone | null;
   /** Whether their profile has a mobile number; absent when it could not be checked. */
   hasProfilePhone?: boolean;
+  /** Whether the reader may place a test call to this person (a portal admin,
+   *  or a rota admin of the person's family). */
+  canTestCall?: boolean;
+  /** What a test call would ring; absent when the reader may not test, or
+   *  CSM holds no number for the person. */
+  testCall?: PagingTestCall | null;
 }
 
 /** What the reader may change; the server checks every edit again. */
@@ -391,7 +447,13 @@ export interface PagingReadinessResponse {
  * Somebody who may change nothing gets empty lists, and the tab is not shown.
  */
 export interface RotaAccess {
-  canManage: { rotaAdmins: boolean; markerFamilies: RotaFamily[] };
+  canManage: {
+    rotaAdmins: boolean;
+    markerFamilies: RotaFamily[];
+    /** The families whose teams' members the reader may add and remove (the
+     *  same rule as markerFamilies). Absent from an older server. */
+    memberFamilies?: RotaFamily[];
+  };
   rotaAdmins: RotaAdminGrant[];
   markers: RotaMarkerGrant[];
 }
@@ -458,6 +520,18 @@ export interface CaseAlertSettings {
   running?: CaseAlertRunning;
   /** The lists a group route is made from; absent for somebody who may see nothing. */
   routeOptions?: CaseAlertRouteOptions;
+  /** SRE viewers only: active assignment groups no enabled SRE redirect
+   *  covers and no Team Schedule team is named after. Their incident cards go
+   *  to the shared SRE room. Absent when there are none. */
+  unmappedGroups?: CaseAlertAssignmentGroup[];
+}
+
+/** A ServiceNow assignment group (a "group" row that is a service's support group). */
+export interface CaseAlertAssignmentGroup {
+  id: string;
+  name: string;
+  /** The services it is the support group of. Absent from an older server. */
+  services?: string[];
 }
 
 /** A team as a route option: CRE, SRE or SME. */
@@ -476,6 +550,9 @@ export interface CaseAlertRouteOptions {
   groups: CaseAlertTeamOption[];
   teams: CaseAlertTeamOption[];
   rotas: { code: string; label: string }[];
+  /** The active assignment groups a redirect can be picked for. Absent from
+   *  an older server. */
+  assignmentGroups?: CaseAlertAssignmentGroup[];
 }
 
 /** A chat room: a ladder's shared room (no teamKey) or an SRE or SME team's
@@ -484,6 +561,9 @@ export interface CaseAlertChatRoom {
   id: string;
   ladder: CaseAlertRoomLadder;
   teamKey?: string;
+  /** An SRE assignment group's own room: the group, and its current name. */
+  groupId?: string;
+  groupName?: string;
   label: string;
   enabled: boolean;
   /** Also gets the cards of an incident with no SRE team. */
@@ -510,6 +590,9 @@ export interface CaseAlertGroupRoute {
   id: string;
   ladder: CaseAlertLadder;
   groupName: string;
+  /** The assignment group the redirect was picked for; absent for one saved
+   *  by name. Its groupName is then the group's current name. */
+  groupId?: string;
   teamKey?: string;
   rotaCode?: string;
   enabled: boolean;
@@ -539,7 +622,8 @@ export interface CaseAlertRunningValue {
 }
 
 export interface CaseAlertRunning {
-  reportedAt: string;
+  /** When the alert service reported; absent when the server has no time. */
+  reportedAt?: string;
   mode: "off" | "shadow" | "db";
   /** Per ladder, each key's value in use. */
   ladders: Partial<
@@ -548,6 +632,46 @@ export interface CaseAlertRunning {
   /** Per ladder, the settings only the file can set. Absent from an alert
    *  service that doesn't report them yet. */
   fileOnly?: Partial<Record<CaseAlertRoomLadder, CaseAlertFileOnly>>;
+  /** Per ladder, whether it runs, its channel, and each team's channel as
+   *  the alert service runs it. Absent from an alert service that doesn't
+   *  report them yet. */
+  channels?: Partial<Record<CaseAlertRoomLadder, CaseAlertLadderChannels>>;
+  /** Per ladder, how the running config routes an incident's assignment
+   *  group with no redirect saved here. Absent from an alert service that
+   *  doesn't report it yet. */
+  groups?: Partial<Record<CaseAlertLadder, CaseAlertGroupRouting>>;
+}
+
+/** How a ladder's running config routes assignment groups. */
+export interface CaseAlertGroupRouting {
+  /** Group name, lower-cased, to the team key it is alerted as. */
+  aliases?: Record<string, string>;
+  /** SRE: the groups paged on the default rota. */
+  defaultGroups?: string[];
+  /** SRE: teams with a chat space but no rota of their own. */
+  teamlessRooms?: string[];
+  /** SRE: the groups (lower-cased) with a chat space of their own in use. */
+  groupRooms?: string[];
+  /** SRE: whether the ladder has its shared space, where a group that maps
+   *  to no space gets its card. Absent from an older report. */
+  sharedRoom?: boolean;
+}
+
+/** One team's channel as running: the ladder's narrowed by the team's own. */
+export interface CaseAlertTeamChannel {
+  team: string;
+  channel: string;
+  /** The team's own saved channel, when it has one. */
+  teamChannel?: string;
+  /** Whether the team has a chat room of its own. */
+  room: boolean;
+}
+
+export interface CaseAlertLadderChannels {
+  /** The ladder runs: its own switch and the file's master switch are on. */
+  enabled: boolean;
+  channel: string;
+  teams: CaseAlertTeamChannel[];
 }
 
 /** What decides whether a ladder pages and what it may cost: read here, set
@@ -563,4 +687,72 @@ export interface CaseAlertFileOnly {
   "safety.callWithoutVerifiedLeads"?: boolean;
   "safety.callHeadsWithoutLowerTiers"?: boolean;
   "phones.source"?: string;
+  /** Whether a stopped chain replies in its thread. */
+  ackChat?: boolean;
+  /** CRE: one email per step. The lists are counted or flagged, never sent. */
+  "email.enabled"?: boolean;
+  "email.teamLists"?: number;
+  "email.creTeamList"?: boolean;
+  "email.csTeamList"?: boolean;
+  /** CRE: true when the file replaces the built-in rule table. */
+  "rules.custom"?: boolean;
+  /** CRE: minutes after the case is created that each step (L0 to L4) is
+   *  called, by severity (S0 to S4). From the code, not the file. */
+  timing?: Partial<Record<string, number[][]>>;
 }
+
+/** A rotation's reminder window: "HH:MM" on the 24-hour clock of an IANA zone. */
+export type ReminderWindow = { start: string; end: string; timeZone: string };
+
+/**
+ * What a group's rota reminder emails may be changed to: whether the weekday
+ * and weekend reminders and the calendar invitations go out, how many people a
+ * weekend rotation needs each day before the weekend is announced, the hours of
+ * the rotations kept on a fixed clock, and who is copied on every reminder.
+ * Keyed by rotation code; a code this form does not show is kept as saved.
+ */
+export type SaveRotaReminderSettings = {
+  weekdayEnabled: boolean;
+  weekendEnabled: boolean;
+  invitesEnabled: boolean;
+  weekendRequired: Record<string, number>;
+  windows: Record<string, ReminderWindow>;
+  copyTo: string[];
+};
+
+/** The saved settings of one group, with who last changed them. */
+export type RotaReminderSettings = SaveRotaReminderSettings & {
+  family: RotaFamily;
+  updatedBy: string;
+  updatedOn: string;
+};
+
+/** Which reminder is asked for: the next working day's, or the weekend's. */
+export type RotaReminderKind = "weekday" | "weekend";
+
+/** Where a request is: waiting for the scheduled task, being sent, or done. */
+export type RotaReminderStatus = "QUEUED" | "SENDING" | "SENT" | "FAILED";
+
+/**
+ * One ask to send a group's rota reminders now, picked up by the scheduled task.
+ * `test` is true for a test copy, which goes only to the person who asked.
+ */
+export type RotaReminderRequest = {
+  id: string;
+  family: RotaFamily;
+  kind: RotaReminderKind;
+  test: boolean;
+  status: RotaReminderStatus;
+  requestedBy: string;
+  requestedOn: string;
+  claimedOn?: string;
+  handledOn?: string;
+  result?: string;
+};
+
+/**
+ * What is posted to ask for a reminder now. With `test` the reminder goes only
+ * to the person asking (marked "[Test copy]"), never to the rota, and is not
+ * recorded as a real reminder.
+ */
+export type SendRotaReminder = { kind: RotaReminderKind; test: boolean };

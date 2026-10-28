@@ -18,7 +18,7 @@
 
 import { useState, type JSX } from "react";
 
-export type LegendGroup = "Rota" | "Hours" | "Leave" | "Allocations";
+export type LegendGroup = "Rota" | "Hours" | "Leave" | "Allocations" | "Engagements";
 
 export interface LegendItem {
   /** Unique within the legend: two windows can share a short code. */
@@ -30,9 +30,11 @@ export interface LegendItem {
   label: string;
   /** Drawn dashed, as an on-call window is on the grid. */
   onCall?: boolean;
+  /** Draw the engagement bar's (or the month marker's) swatch instead of a code chip. */
+  swatch?: "engagement" | "engagement-mark";
 }
 
-const ORDER: LegendGroup[] = ["Rota", "Hours", "Leave", "Allocations"];
+const ORDER: LegendGroup[] = ["Rota", "Hours", "Leave", "Allocations", "Engagements"];
 
 /** Where the open/closed choice is kept, per browser. */
 const STORE_KEY = "csm-ts.roster-legend.open";
@@ -56,10 +58,11 @@ function writeOpen(open: boolean): void {
 /**
  * What the codes on the roster mean.
  *
- * Only the codes actually on screen, so it stays short and never explains a
- * chip the reader cannot see. Open by default -- the codes are the rota
- * sheet's shorthand, which a new lead or a manager does not know -- and a
- * reader who knows them can fold it away; the choice is remembered.
+ * The codes on screen, plus every leave, allocation and move tag a rota
+ * marker can add, so a lead finds what can be marked without opening a cell.
+ * Open by default -- the codes are the rota sheet's shorthand, which a new
+ * lead or a manager does not know -- and a reader who knows them can fold it
+ * away; the choice is remembered.
  */
 export default function RosterLegend({ items }: { items: LegendItem[] }): JSX.Element | null {
   const [open, setOpen] = useState(readOpen);
@@ -78,7 +81,7 @@ export default function RosterLegend({ items }: { items: LegendItem[] }): JSX.El
       }}
     >
       <summary>
-        Legend <small>what the codes on screen mean</small>
+        Legend <small>what the codes mean, and every tag that can be marked</small>
       </summary>
       <div className="rl-groups">
         {groups.map((g) => (
@@ -87,7 +90,13 @@ export default function RosterLegend({ items }: { items: LegendItem[] }): JSX.El
             <ul>
               {g.items.map((it) => (
                 <li key={it.key}>
-                  <span className={`chip sm ${it.token}${it.onCall ? " oc" : ""}`}>{it.code}</span>
+                  {it.swatch === "engagement" ? (
+                    <span className="engsw" aria-hidden="true" />
+                  ) : it.swatch === "engagement-mark" ? (
+                    <span className="engmksw" aria-hidden="true" />
+                  ) : (
+                    <span className={`chip sm ${it.token}${it.onCall ? " oc" : ""}`}>{it.code}</span>
+                  )}
                   <span className="rl-l">{it.label}</span>
                 </li>
               ))}

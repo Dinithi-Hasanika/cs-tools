@@ -20,6 +20,7 @@ import { useState, useMemo, useEffect, type JSX } from "react";
 import useGetUserDetails from "@features/settings/api/useGetUserDetails";
 import useGetProjectDetails from "@api/useGetProjectDetails";
 import useCustomerPermissions, { normalizeCustomerRoles } from "@hooks/useCustomerPermissions";
+import { isPendingVerificationSettingsEnabled } from "@config/pendingVerificationSettingsConfig";
 import TabBar from "@components/tab-bar/TabBar";
 import SettingsAiAssistant from "@features/settings/components/SettingsAiAssistant";
 import SettingsVerification from "@features/settings/components/SettingsVerification";
@@ -65,12 +66,8 @@ export default function SettingsPage(): JSX.Element {
 
   // The AI Assistant settings save through PATCH /projects/{id}, which the
   // backend gates on projects:update. Deriving the UI from the same permission
-  // keeps the two from disagreeing. projects:update only ever gates this one
-  // route, and that route only ever touches hasAgent/hasKbReferences (see
-  // entity.UpdateProjectRequest) -- not general project data -- so
-  // customer_admin holding it only grants control over their own project's
-  // AI Assistant settings, nothing broader. If that scope ever changes
-  // (projects:update starts gating something else), re-check this grant.
+  // keeps the two from disagreeing. Only customer_admin holds it; WSO2-side
+  // roles are intentionally excluded (mirrors rbac.go in backend-v2).
   const { can } = useCustomerPermissions();
   const canUpdateProject = can("projects", "update");
 
@@ -84,25 +81,37 @@ export default function SettingsPage(): JSX.Element {
     );
   }, [projectDetails?.type?.label]);
 
-  const tabs = useMemo(
-    () =>
-      hideRestrictedTabs
-        ? SETTINGS_PAGE_TABS.filter(
-            (tab) => tab.id !== SettingsPageTabId.REGISTRY_TOKENS,
-          )
-        : [...SETTINGS_PAGE_TABS],
-    [hideRestrictedTabs],
+  // Kill switch for the Pending Verification tab, hidden until the
+  // auto-closure scheduler integration is deployed -- see
+  // isPendingVerificationSettingsEnabled's own doc comment.
+  const isVerificationSettingsEnabled = useMemo(
+    () => isPendingVerificationSettingsEnabled(),
+    [],
   );
 
+  const tabs = useMemo(() => {
+    let result: Array<(typeof SETTINGS_PAGE_TABS)[number]> = [
+      ...SETTINGS_PAGE_TABS,
+    ];
+    if (hideRestrictedTabs) {
+      result = result.filter((tab) => tab.id !== SettingsPageTabId.REGISTRY_TOKENS);
+    }
+    if (!isVerificationSettingsEnabled) {
+      result = result.filter((tab) => tab.id !== SettingsPageTabId.VERIFICATION);
+    }
+    return result;
+  }, [hideRestrictedTabs, isVerificationSettingsEnabled]);
+
   const safeActiveTab = useMemo(() => {
-    if (
-      hideRestrictedTabs &&
-      resolveSettingsPageTabId(activeTab) === SettingsPageTabId.REGISTRY_TOKENS
-    ) {
+    const resolved = resolveSettingsPageTabId(activeTab);
+    if (hideRestrictedTabs && resolved === SettingsPageTabId.REGISTRY_TOKENS) {
       return SettingsPageTabId.AI;
     }
+    if (!isVerificationSettingsEnabled && resolved === SettingsPageTabId.VERIFICATION) {
+      return SettingsPageTabId.USERS;
+    }
     return activeTab;
-  }, [activeTab, hideRestrictedTabs]);
+  }, [activeTab, hideRestrictedTabs, isVerificationSettingsEnabled]);
 
   const displayTab = useMemo(
     () => resolveSettingsPageTabId(safeActiveTab),

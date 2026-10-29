@@ -19,13 +19,18 @@ import { type JSX, useEffect, useRef, useState } from "react";
 import { useCodeDashboardPortal } from "@features/csm-custom-dashboards/api/useCodeDashboardPortal";
 
 /**
- * The Content-Security-Policy of the iframe's document. It blocks every
- * outbound request the generated code could make with the viewer's data
- * (fetch, XHR, WebSocket, images, fonts, styles, frames, forms): the code
- * catalogue allows plain DOM and inline SVG only, so a real dashboard needs
- * none of them. It cannot stop the frame navigating itself to another
- * address; that needs a separate sandbox origin, still to do before this goes
- * beyond the POC (phase 2).
+ * The Content-Security-Policy of the iframe's document. It blocks the requests
+ * the generated code could make from inside the document (fetch, XHR,
+ * WebSocket, images, fonts, styles, frames, forms): the code catalogue allows
+ * plain DOM and inline SVG only, so a real dashboard needs none of them.
+ *
+ * It does NOT stop the code sending the viewer's data out: the code can
+ * navigate its own frame (`location = url`) with the data in the address, and
+ * the data leaves in that request. No browser supports a CSP directive that
+ * blocks this (`navigate-to` never shipped), and a separate sandbox origin
+ * would not help either. So this frame is not safe for viewer data, and the
+ * code approach stays off (`DASHBOARD_GENERATE_CODE_ENABLED`) until phase 2
+ * finds a design that closes this.
  */
 const FRAME_CSP =
   "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";

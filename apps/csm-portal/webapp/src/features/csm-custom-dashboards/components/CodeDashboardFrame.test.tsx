@@ -23,7 +23,7 @@ vi.mock("@features/csm-custom-dashboards/api/useCodeDashboardPortal", () => ({
 }));
 
 describe("CodeDashboardFrame", () => {
-  it("runs the code in a scripts-only sandbox whose document blocks outbound requests", () => {
+  it("runs the code in a scripts-only sandbox whose document blocks fetch and subresource requests", () => {
     const { container } = render(<CodeDashboardFrame source="function render(portal, root) {}" />);
     const frame = container.querySelector("iframe");
     expect(frame).not.toBeNull();

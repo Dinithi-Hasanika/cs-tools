@@ -1099,6 +1099,16 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   user: {
     searchEndpoint: "/users/search",
+    // The preview page's URL round trip turns a boolean filter into a
+    // string array (`active=true` -> `["true"]`); `/users/search` takes
+    // `active` as a boolean, so turn it back. The rest is the default
+    // `{filters, pagination, sortBy?}` body.
+    buildSearchRequestBody: ({ filters, offset, limit, sortBy }) => {
+      const flat: Record<string, unknown> = { ...filters };
+      const v = Array.isArray(flat.active) ? (flat.active as unknown[])[0] : flat.active;
+      if (v === "true" || v === "false") flat.active = v === "true";
+      return { filters: flat, pagination: { offset, limit }, ...(sortBy ? { sortBy } : {}) };
+    },
     itemsKey: "users",
     primaryLabel: (item) => {
       const first = asString(item.firstName);

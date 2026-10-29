@@ -18,20 +18,33 @@ package dashboard
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
 
-// serviceCatalogue is integrations/csm-ai-integration-service's built-in
-// dashboard catalogue, relative to this package's directory.
-const serviceCatalogue = "../../../../../integrations/csm-ai-integration-service/internal/catalogue/catalogue.md"
+// aiIntegrationService is integrations/csm-ai-integration-service, and
+// serviceCatalogue its built-in dashboard catalogue, relative to this
+// package's directory.
+const (
+	aiIntegrationService = "../../../../../integrations/csm-ai-integration-service"
+	serviceCatalogue     = aiIntegrationService + "/internal/catalogue/catalogue.md"
+)
 
 // catalogueExample returns the catalogue's own worked example (section 10),
 // the definition the model is shown as the target.
+//
+// The test is skipped only when the AI integration service is not in the
+// checkout at all (this backend's change can be checked out before the
+// service's is merged). With the service present, a missing or moved
+// catalogue fails the test, so the drift check stays on.
 func catalogueExample(t *testing.T) string {
 	t.Helper()
+	if _, err := os.Stat(aiIntegrationService); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("the AI integration service (%s) is not in this checkout", aiIntegrationService)
+	}
 	// The catalogue lives with the model call, in the AI integration
 	// service; its example must still pass this backend's own check, so the
 	// two components cannot drift apart unnoticed.

@@ -14,17 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package catalogue holds the catalogues the model is given as its system
-// prompt: catalogue.md for a dashboard definition (POST
-// /ai/dashboards/generate) and code_catalogue.md for a dashboard written as
-// JavaScript (POST /ai/dashboards/generate-code). Each tells the model what it
-// may use, and is the only thing about the portal the model sees besides the
-// user's prompt, the draft being edited and the team list.
+// Package catalogue holds the catalogue the model is given as its system
+// prompt: catalogue.md, for a dashboard definition (POST
+// /ai/dashboards/generate). It tells the model what it may use, and is the
+// only thing about the portal the model sees besides the user's prompt, the
+// draft being edited and the team list.
 //
-// Both ship inside the binary (embedded at build time), so they are changed and
-// reviewed like code and a deployment without a file still works. Each can be
+// It ships inside the binary (embedded at build time), so it is changed and
+// reviewed like code and a deployment without a file still works. It can be
 // overridden by a file: in Choreo a file mount (Configs & Secrets), named by
-// CATALOGUE_FILE / CODE_CATALOGUE_FILE. A file is checked when the service
+// CATALOGUE_FILE. A file is checked when the service
 // starts (a missing or empty file fails the start, so a mistyped path is
 // caught there) and re-read on every request, so a changed mount applies
 // without a rebuild.
@@ -41,18 +40,12 @@ import (
 //go:embed catalogue.md
 var dashboardEmbedded string
 
-//go:embed code_catalogue.md
-var codeEmbedded string
-
 // DashboardEmbedded returns the dashboard catalogue built into the binary.
 func DashboardEmbedded() string { return dashboardEmbedded }
 
-// CodeEmbedded returns the code catalogue built into the binary.
-func CodeEmbedded() string { return codeEmbedded }
-
-// Source supplies one catalogue's text: the built-in copy, or a file.
+// Source supplies the catalogue's text: the built-in copy, or a file.
 type Source struct {
-	name     string // for messages: "dashboard catalogue", "code catalogue"
+	name     string // for messages: "dashboard catalogue"
 	embedded string
 	file     string
 }
@@ -61,12 +54,6 @@ type Source struct {
 // empty, else file. A file that cannot be read now is an error.
 func NewDashboard(file string) (Source, error) {
 	return newSource("dashboard catalogue", dashboardEmbedded, file)
-}
-
-// NewCode is the code catalogue: the built-in copy when file is empty, else
-// file. A file that cannot be read now is an error.
-func NewCode(file string) (Source, error) {
-	return newSource("code catalogue", codeEmbedded, file)
 }
 
 // newSource is a catalogue source for file (trimmed; empty means the built-in
@@ -87,7 +74,7 @@ func (s Source) Text() (string, error) {
 	if s.file == "" {
 		return s.embedded, nil
 	}
-	raw, err := os.ReadFile(s.file) // #nosec G304 -- path is deployment configuration (CATALOGUE_FILE / CODE_CATALOGUE_FILE), not user input
+	raw, err := os.ReadFile(s.file) // #nosec G304 -- path is deployment configuration (CATALOGUE_FILE), not user input
 	if err != nil {
 		return "", fmt.Errorf("read %s %q: %w", s.name, s.file, err)
 	}

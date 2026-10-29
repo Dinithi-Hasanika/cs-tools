@@ -26,32 +26,24 @@ import (
 )
 
 // status sends method path through the service's routes. The handler has no
-// generators (no key), so a registered AI route answers 503 not_configured
+// generator (no key), so a registered AI route answers 503 not_configured
 // and an unregistered one 404.
-func status(t *testing.T, codeGeneration bool, method, path string) int {
+func status(t *testing.T, method, path string) int {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	newMux(handler.NewDashboardHandler(nil, nil), codeGeneration).
+	newMux(handler.NewDashboardHandler(nil)).
 		ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(`{"prompt":"p"}`)))
 	return rec.Code
 }
 
-func TestTheCodeRouteExistsOnlyWhenTurnedOn(t *testing.T) {
-	if got := status(t, false, http.MethodPost, "/ai/dashboards/generate-code"); got != http.StatusNotFound {
-		t.Errorf("off: generate-code = %d, want 404 (not registered)", got)
+func TestRoutes(t *testing.T) {
+	if got := status(t, http.MethodGet, "/health"); got != http.StatusOK {
+		t.Errorf("/health = %d, want 200", got)
 	}
-	if got := status(t, true, http.MethodPost, "/ai/dashboards/generate-code"); got != http.StatusServiceUnavailable {
-		t.Errorf("on: generate-code = %d, want 503 from the handler (registered, no key)", got)
+	if got := status(t, http.MethodPost, "/ai/dashboards/generate"); got != http.StatusServiceUnavailable {
+		t.Errorf("generate = %d, want 503 from the handler (registered, no key)", got)
 	}
-}
-
-func TestTheOtherRoutesDoNotDependOnTheFlag(t *testing.T) {
-	for _, on := range []bool{false, true} {
-		if got := status(t, on, http.MethodGet, "/health"); got != http.StatusOK {
-			t.Errorf("code generation %v: /health = %d, want 200", on, got)
-		}
-		if got := status(t, on, http.MethodPost, "/ai/dashboards/generate"); got != http.StatusServiceUnavailable {
-			t.Errorf("code generation %v: generate = %d, want 503 from the handler", on, got)
-		}
+	if got := status(t, http.MethodPost, "/ai/dashboards/unknown"); got != http.StatusNotFound {
+		t.Errorf("an unregistered path = %d, want 404", got)
 	}
 }

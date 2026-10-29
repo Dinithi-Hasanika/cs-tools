@@ -36,7 +36,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-ai-integration-service/internal/middleware"
 )
 
-// main reads the configuration, loads the catalogues, serves the routes and,
+// main reads the configuration, loads the catalogue, serves the routes and,
 // on SIGINT or SIGTERM, shuts down after in-flight requests finish (see
 // shutdownTimeout). A bad setting or an unreadable catalogue file stops the start.
 func main() {
@@ -55,36 +55,19 @@ func main() {
 		slog.Error("dashboard catalogue", "err", err)
 		os.Exit(1)
 	}
-	// The code approach (phase 2) is off unless DASHBOARD_GENERATE_CODE_ENABLED
-	// is "true": its catalogue is then not even loaded.
-	codeCatalogueOrigin := "off"
-	var codeCatalogue catalogue.Source
-	if cfg.CodeGenerationEnabled {
-		codeCatalogue, err = catalogue.NewCode(cfg.CodeCatalogueFile)
-		if err != nil {
-			slog.Error("code catalogue", "err", err)
-			os.Exit(1)
-		}
-		codeCatalogueOrigin = codeCatalogue.Origin()
-	}
 	// Never the key.
 	slog.Info("model calls", "enabled", cfg.Enabled(), "model", cfg.Model, "timeout", cfg.Timeout,
-		"gateway", cfg.GatewayHost(), "catalogue", dashboardCatalogue.Origin(),
-		"codeGeneration", cfg.CodeGenerationEnabled, "codeCatalogue", codeCatalogueOrigin)
+		"gateway", cfg.GatewayHost(), "catalogue", dashboardCatalogue.Origin())
 
 	// Without a key the AI routes answer 503 not_configured.
 	var dashboardGenerator *dashboards.Generator
-	var codeGenerator *dashboards.CodeGenerator
 	if cfg.Enabled() {
 		client := claude.NewClient(claude.Config{APIKey: cfg.APIKey, BaseURL: cfg.BaseURL, Timeout: cfg.Timeout})
 		dashboardGenerator = dashboards.NewGenerator(client, cfg.Model, cfg.Timeout, dashboardCatalogue)
-		if cfg.CodeGenerationEnabled {
-			codeGenerator = dashboards.NewCodeGenerator(client, cfg.Model, cfg.Timeout, codeCatalogue)
-		}
 	}
-	dashboardHandler := handler.NewDashboardHandler(dashboardGenerator, codeGenerator)
+	dashboardHandler := handler.NewDashboardHandler(dashboardGenerator)
 
-	mux := newMux(dashboardHandler, cfg.CodeGenerationEnabled)
+	mux := newMux(dashboardHandler)
 
 	addr := ":" + envOrDefault("PORT", "8080")
 

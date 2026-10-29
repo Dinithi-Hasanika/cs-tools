@@ -10,9 +10,9 @@ component with a Claude client, the Anthropic SDK and the model credentials: the
 | Here | In the CSM portal backend |
 |---|---|
 | The Claude client (gateway base URL, API key, model, timeout, retries) | Authentication and permissions of the end user (`PermWrite` for generation) |
-| The catalogues the model reads (built-in copies; a Choreo file mount overrides each) | The routes the webapp calls (`/dashboards/generate`, `/dashboards/generate-code`) |
+| The catalogue the model reads (built-in copy; a Choreo file mount overrides it) | The route the webapp calls (`/dashboards/generate`) |
 | Building the prompt (catalogue + the team list the backend sends + prompt + current draft) | Validating what the model wrote (`dashboard.ParseGenerated`, the per-type rules) |
-| The call, its timeout, and reading the answer (the JSON object or source, a decline, a refusal, a truncation) | The team registry and the team key -> id / name swap; saving and sharing |
+| The call, its timeout, and reading the answer (the JSON objects, a decline, a refusal, a truncation) | The team registry and the team key -> id / name swap; saving and sharing |
 | Mapping those outcomes to a stable error vocabulary | The sample generators used when this service is not configured |
 
 The backend sends each request's **team list** (from its `CSM_TEAM_REGISTRY`); this service never reads
@@ -24,7 +24,6 @@ the registry itself, so it is configured in one place.
 |---|---|
 | `GET /health` | liveness, always 200 |
 | `POST /ai/dashboards/generate` | the JSON dashboard generator (`internal/dashboards`, `internal/handler`) |
-| `POST /ai/dashboards/generate-code` | the code approach, phase 2 (`internal/dashboards/code.go`); **registered only when `DASHBOARD_GENERATE_CODE_ENABLED` is exactly `true`** |
 
 ### `POST /ai/dashboards/generate`
 
@@ -50,23 +49,6 @@ the backend maps the code to its own status and user-facing text:
 | 504 | `timeout` | the model call ran out of time (`CLAUDE_TIMEOUT`) |
 | 502 | `model_call_failed` | any other call failure; a gateway 401/403 is this service's key problem, never passed on |
 
-### `POST /ai/dashboards/generate-code`
-
-**Off by default: phase 1 ships the JSON approach only.** `newMux` (`cmd/server/routes.go`) registers
-this route only when `DASHBOARD_GENERATE_CODE_ENABLED` is exactly `true` (`codeGenerationEnabled`:
-`1`, `TRUE`, `yes` are off); off, the path answers 404, the code catalogue is not loaded and the code
-generator is not built. The CSM portal backend (`POST /dashboards/generate-code`) and webapp (the
-`/dashboard/my/new-code` page and its button) are gated by the same name, so the three are turned on
-together; with only some of them on, the feature fails (e.g. the backend's call here gets a 404 and shows
-"couldn't be reached"). Keep the route's code and tests working: phase 2 turns it on, it does not restore it.
-
-Body `{prompt, current?}`: the prompt (as above) and the source being edited (at most 60,000 characters;
-absent or "" on a first message). No team list: the code catalogue has no Teams section. The reply checks
-are all here, because they only read the code catalogue's output contract (one fenced block, the last one
-wins, it must define `function render(`, at most 60,000 characters; a reply with no block that starts with
-`CANNOT:` is the model declining). 200 is `{source, reply, usage}` or `{declined, usage}`; errors and codes
-are the table above.
-
 ## Model settings
 
 `ANTHROPIC_API_KEY` (a secret) and `CLAUDE_BASE_URL` go together: the key is the CSM AI gateway's, so
@@ -85,26 +67,25 @@ are set per environment in Configs & Secrets (the key as a secret).
   end-user token validation here without confirming that assumption has changed.
 - **No end-user identity is forwarded or needed.** The model call is the same for every user.
 
-## Catalogues
+## Catalogue
 
-The model is given a catalogue: what a dashboard definition may contain, written for the model. There are
-two, in `internal/catalogue`: `catalogue.md` (a dashboard definition) and `code_catalogue.md` (a dashboard
-written as JavaScript). Each is **built into the binary** as the default and can be **overridden by a file**
-that Choreo mounts (Configs & Secrets -> file mount), named by `CATALOGUE_FILE` / `CODE_CATALOGUE_FILE`.
+The model is given a catalogue: what a dashboard definition may contain, written for the model
+(`internal/catalogue/catalogue.md`). It is **built into the binary** as the default and can be
+**overridden by a file** that Choreo mounts (Configs & Secrets -> file mount), named by `CATALOGUE_FILE`.
 A file is checked at startup (missing or empty fails the start, so a mistyped path shows there) and
 **re-read on every request**, so an edited mount applies without a restart; a file that goes missing
-later is an error, never a silent fall back to the built-in copy. The startup log names each one's origin
-(`built-in` or the path). Keep the built-in copies current: they are what local runs and tests use, and
+later is an error, never a silent fall back to the built-in copy. The startup log names its origin
+(`built-in` or the path). Keep the built-in copy current: they are what local runs and tests use, and
 what a deployment without the mount gets.
 
 **Editing `catalogue.md` can break a backend test, by design.** The backend's
 `TestParseGenerated_TheCatalogueExampleIsValid` (`apps/csm-portal/backend/internal/dashboard`) reads this
 file and runs its section 10 example through the backend's own check, so the catalogue and the rules
 that judge the model's output cannot drift apart. After editing it, run the backend's
-`go test ./internal/dashboard`. In the local stack, an edit to a built-in catalogue needs this service's
+`go test ./internal/dashboard`. In the local stack, an edit to the built-in catalogue needs this service's
 image rebuilt (`docker compose up -d --build csm-ai-integration-service`), not the backend's.
 
-The Teams section is not in either file: the backend sends the team list with each request and
+The Teams section is not in the file: the backend sends the team list with each request and
 `internal/teams` appends it to the catalogue (the same text the backend wrote before the move).
 
 ## Conventions

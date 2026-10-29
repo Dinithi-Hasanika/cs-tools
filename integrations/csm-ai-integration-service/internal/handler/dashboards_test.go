@@ -108,6 +108,7 @@ func TestGenerateRejectsABadRequestWithoutACall(t *testing.T) {
 		"team field":     `{"prompt":"p","teams":[{"key":"r","name":"Rigel","field":"accountId"}]}`,
 		"team family":    `{"prompt":"p","teams":[{"key":"r","name":"Rigel","family":"sme","field":"creTeam"}]}`,
 		"body too big":   `{"prompt":"p","draft":{"x":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}}`,
+		"draft too big":  `{"prompt":"p","draft":` + draftOfSize(draftMaxBytes+1) + `}`,
 	} {
 		gen := &fakeGenerator{}
 		status, out := post(t, &DashboardHandler{generator: gen}, body)
@@ -119,6 +120,14 @@ func TestGenerateRejectsABadRequestWithoutACall(t *testing.T) {
 	if status, _ := post(t, &DashboardHandler{generator: gen}, `{"prompt":"`+strings.Repeat("é", promptMaxLength)+`"}`); status != http.StatusOK {
 		t.Errorf("a prompt of exactly %d characters: status %d, want 200", promptMaxLength, status)
 	}
+	if status, _ := post(t, &DashboardHandler{generator: gen}, `{"prompt":"p","draft":`+draftOfSize(draftMaxBytes)+`}`); status != http.StatusOK {
+		t.Errorf("a draft of exactly %d bytes: status %d, want 200", draftMaxBytes, status)
+	}
+}
+
+// draftOfSize is a JSON object of exactly n bytes.
+func draftOfSize(n int) string {
+	return `{"x":"` + strings.Repeat("a", n-len(`{"x":""}`)) + `"}`
 }
 
 func TestGenerateWithoutAKeyIsNotConfigured(t *testing.T) {

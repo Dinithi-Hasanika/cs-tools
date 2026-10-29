@@ -19,8 +19,8 @@
 -- it. Only the dashboard's owner adds or removes rows; the service checks
 -- that, and that the user is not the owner and is internal staff. One row per
 -- (dashboard, user). Rows go with the dashboard and with the user.
--- Postgres-only, no ServiceNow equivalent. Sharing with a group would be a
--- table of its own beside this one.
+-- Postgres-only: no other data source holds it. Sharing with a team is a
+-- table of its own beside this one (0253).
 CREATE TABLE IF NOT EXISTS custom_dashboard_share (
     dashboard_id        UUID        NOT NULL REFERENCES custom_dashboard(id) ON DELETE CASCADE,
     shared_with_user_id UUID        NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,

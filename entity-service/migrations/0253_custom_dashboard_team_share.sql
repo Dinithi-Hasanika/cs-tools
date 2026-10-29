@@ -15,13 +15,13 @@
 -- under the License.
 
 -- custom_dashboard_team_share: a saved custom dashboard (migration 0251)
--- shared with one team (Rigel, Castor, Americas, Apollo, ...), the team-level
+-- shared with one team (a row of the team table), the team-level
 -- sibling of custom_dashboard_share (0252). Membership is read live from
 -- team_member when a dashboard is listed, so whoever is in the team now can
 -- view it (CSM portal Shared Dashboards) and someone who leaves the team stops
 -- seeing it. Only the dashboard's owner adds or removes rows; the service
 -- checks that. One row per (dashboard, team). Rows go with the dashboard and
--- with the team. Postgres-only, no ServiceNow equivalent.
+-- with the team. Postgres-only: no other data source holds it.
 CREATE TABLE IF NOT EXISTS custom_dashboard_team_share (
     dashboard_id UUID        NOT NULL REFERENCES custom_dashboard(id) ON DELETE CASCADE,
     team_id      UUID        NOT NULL REFERENCES team(id) ON DELETE CASCADE,

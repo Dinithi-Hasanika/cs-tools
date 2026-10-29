@@ -43,6 +43,10 @@ const (
 	promptMaxLength = 2000
 	// maxTeams caps the team list.
 	maxTeams = 500
+	// draftMaxBytes caps the draft (64 KiB), the size entity-service allows
+	// a saved definition: the draft is the definition being edited, so a real
+	// one always fits, and it bounds what one call can send the model.
+	draftMaxBytes = 64 << 10
 )
 
 // Error codes, in the body's "code", for the backend to map to its own
@@ -246,6 +250,9 @@ func decodeGenerateRequest(w http.ResponseWriter, r *http.Request) (dashboards.R
 	if d := strings.TrimSpace(string(body.Draft)); d != "" && d != "null" {
 		if !strings.HasPrefix(d, "{") {
 			return dashboards.Request{}, "draft must be a JSON object"
+		}
+		if len(d) > draftMaxBytes {
+			return dashboards.Request{}, "draft is over 64 KiB"
 		}
 		draft = json.RawMessage(d)
 	}

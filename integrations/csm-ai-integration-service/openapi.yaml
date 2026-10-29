@@ -131,7 +131,10 @@ components:
         draft:
           type: object
           nullable: true
-          description: The dashboard being edited, in the definition file format.
+          description: >
+            The dashboard being edited, in the definition file format. At most
+            64 KiB (65,536 bytes), the size a saved definition may be; larger
+            is a 400.
         teams:
           type: array
           maxItems: 500

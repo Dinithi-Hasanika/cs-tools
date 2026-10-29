@@ -19,8 +19,11 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -200,5 +203,123 @@ func TestCustomDashboardIntegration_DeleteAndGetMissing(t *testing.T) {
 	got, err := repo.Get(ctx, cdbOwnerA, cdbDashboard1)
 	if err != nil || got != nil {
 		t.Fatalf("Get after delete = %+v, %v; want nil, nil", got, err)
+	}
+}
+
+// cdbFillID is a dashboard id for filling an owner up to the limit.
+func cdbFillID(i int) string { return fmt.Sprintf("cdb00000-0000-4000-8000-1%011d", i) }
+
+// Saves racing at the limit: with the owner at one below the cap, many new
+// dashboards saved at the same moment may add exactly one. This does not by
+// itself prove the lock (the saves rarely overlap closely enough without it);
+// TestCustomDashboardIntegration_UpsertWaitsForTheOwnersLock does.
+func TestCustomDashboardIntegration_LimitHoldsUnderConcurrentSaves(t *testing.T) {
+	repo := NewCustomDashboardRepository(newCustomDashboardIntegrationPool(t))
+	for i := 0; i < domain.MaxCustomDashboards-1; i++ {
+		saveCustomDashboard(t, repo, cdbOwnerA, cdbFillID(i), fmt.Sprintf("Fill %d", i), `{}`)
+	}
+
+	const racers = 10
+	var wg sync.WaitGroup
+	saved := make([]bool, racers)
+	errs := make([]error, racers)
+	start := make(chan struct{})
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			d, err := repo.Upsert(context.Background(), cdbOwnerA, cdbFillID(1000+i),
+				domain.SaveCustomDashboardRequest{Name: fmt.Sprintf("Racer %d", i), Definition: `{}`})
+			saved[i], errs[i] = d != nil, err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	ok, refused := 0, 0
+	for i := range saved {
+		var v *apierror.ValidationError
+		switch {
+		case errs[i] == nil && saved[i]:
+			ok++
+		case errors.As(errs[i], &v):
+			refused++
+		default:
+			t.Errorf("racer %d: saved %v, err %v; want saved or the limit error", i, saved[i], errs[i])
+		}
+	}
+	if ok != 1 || refused != racers-1 {
+		t.Errorf("saved %d, refused %d; want exactly 1 saved and %d refused", ok, refused, racers-1)
+	}
+	list, err := repo.List(context.Background(), cdbOwnerA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != domain.MaxCustomDashboards {
+		t.Errorf("owner has %d dashboards, want exactly %d", len(list), domain.MaxCustomDashboards)
+	}
+}
+
+// At the limit, replacing one of the owner's own dashboards still works, and
+// another owner is not affected by the first owner's count.
+func TestCustomDashboardIntegration_LimitAllowsReplacingAndOtherOwners(t *testing.T) {
+	repo := NewCustomDashboardRepository(newCustomDashboardIntegrationPool(t))
+	for i := 0; i < domain.MaxCustomDashboards; i++ {
+		saveCustomDashboard(t, repo, cdbOwnerA, cdbFillID(i), fmt.Sprintf("Fill %d", i), `{}`)
+	}
+	_, err := repo.Upsert(context.Background(), cdbOwnerA, cdbDashboard1, domain.SaveCustomDashboardRequest{Name: "One too many", Definition: `{}`})
+	var v *apierror.ValidationError
+	if !errors.As(err, &v) {
+		t.Fatalf("a new dashboard at the limit: err %v, want the limit error", err)
+	}
+	if d := saveCustomDashboard(t, repo, cdbOwnerA, cdbFillID(0), "Fill 0 renamed", `{"x":1}`); d.Name != "Fill 0 renamed" {
+		t.Errorf("replacing at the limit: name %q", d.Name)
+	}
+	saveCustomDashboard(t, repo, cdbOwnerB, cdbDashboard2, "Owner B", `{}`)
+}
+
+// Upsert takes the owner's lock before it counts: while another transaction
+// holds that lock, a save for the owner waits, a save for another owner does
+// not, and the waiting save finishes once the lock is released. Without the
+// lock the first save would finish at once, and the count and the insert of
+// two saves could interleave.
+func TestCustomDashboardIntegration_UpsertWaitsForTheOwnersLock(t *testing.T) {
+	pool := newCustomDashboardIntegrationPool(t)
+	repo := NewCustomDashboardRepository(pool)
+	ctx := context.Background()
+
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(ctx) //nolint:errcheck // released below; a second Rollback is a no-op
+	if _, err := holder.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`, "custom-dashboard-owner:"+cdbOwnerA); err != nil {
+		t.Fatalf("take the owner's lock: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := repo.Upsert(ctx, cdbOwnerA, cdbDashboard1, domain.SaveCustomDashboardRequest{Name: "Waits", Definition: `{}`})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("a save for the owner finished while the owner's lock was held (err %v): it does not take the lock", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	saveCustomDashboard(t, repo, cdbOwnerB, cdbDashboard2, "Other owner", `{}`)
+
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the waiting save: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiting save did not finish after the lock was released")
 	}
 }

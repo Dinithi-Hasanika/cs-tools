@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -94,7 +95,9 @@ func (s *customDashboardShareService) AddShare(ctx context.Context, dashboardID,
 	if err != nil {
 		return domain.CustomDashboardShareList{}, err
 	}
-	if userID == ownerID {
+	// The id check accepts upper-case UUIDs while ownerID is the database's
+	// lower-case form; PostgreSQL stores both as the same UUID.
+	if strings.EqualFold(userID, ownerID) {
 		return domain.CustomDashboardShareList{}, &apierror.ValidationError{Msg: "you cannot share a dashboard with yourself"}
 	}
 	users, err := s.userRepo.GetUsersByIDs(ctx, []string{userID})

@@ -256,6 +256,14 @@ func decodeGenerateRequest(w http.ResponseWriter, r *http.Request) (dashboards.R
 		if strings.TrimSpace(t.Key) == "" || strings.TrimSpace(t.Name) == "" || strings.TrimSpace(t.Field) == "" {
 			return dashboards.Request{}, "every team needs a key, a name and a field"
 		}
+		if t.Field != "creTeam" && t.Field != "sreTeam" {
+			return dashboards.Request{}, "a team's field must be creTeam or sreTeam"
+		}
+		switch t.Family {
+		case "", "cre-abt", "cre", "sre-abt", "sre":
+		default:
+			return dashboards.Request{}, "a team's family must be cre-abt, cre, sre-abt or sre"
+		}
 		if strings.ContainsAny(t.Key+t.Name+t.Family+t.Field, "|\n\r`") {
 			return dashboards.Request{}, "a team's key, name, family or field holds a character the Teams table cannot hold"
 		}

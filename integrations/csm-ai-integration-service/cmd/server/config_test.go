@@ -102,6 +102,17 @@ func TestLoadConfigRejectsBadValues(t *testing.T) {
 	}
 }
 
+func TestShutdownWaitsForAnInFlightModelCall(t *testing.T) {
+	for model, want := range map[time.Duration]time.Duration{
+		45 * time.Second: 60 * time.Second,
+		90 * time.Second: 105 * time.Second,
+	} {
+		if got := shutdownTimeout(model); got != want {
+			t.Errorf("shutdownTimeout(%v) = %v, want %v", model, got, want)
+		}
+	}
+}
+
 func TestWriteTimeoutLeavesRoomForTheModelCall(t *testing.T) {
 	for model, want := range map[time.Duration]time.Duration{
 		45 * time.Second: 2 * time.Minute,

@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -239,5 +240,27 @@ func TestCustomDashboardShareService_RequiresToken(t *testing.T) {
 	var ue *apierror.UnauthorizedError
 	if !errors.As(err, &ue) {
 		t.Fatalf("got %T %v, want UnauthorizedError", err, err)
+	}
+}
+
+// The id check accepts an upper-case UUID, while the caller's own id comes
+// from the database in lower case; PostgreSQL would store both as the same
+// UUID, so the upper-case copy of the caller's own id must be refused too.
+func TestCustomDashboardShareService_AddShare_RefusesYourselfInAnyCase(t *testing.T) {
+	const ownerID = "5e636a12-0000-4000-8000-0000000000bb"
+	upper := strings.ToUpper(ownerID)
+	users := shareUsers{
+		stubUserRepo: stubUserRepo{getUserByEmail: func(_ context.Context, email string) (domain.User, error) {
+			return domain.User{ID: ownerID, Email: email}, nil
+		}},
+		// Were the check case-sensitive, this would let the share through.
+		byID: map[string]domain.User{upper: {ID: upper, UserType: domain.UserTypeInternal}},
+	}
+	repo := &fakeShareRepo{addOwned: true}
+	svc := NewCustomDashboardShareService(repo, &fakeCustomDashboardRepo{get: &domain.CustomDashboard{ID: testShareDashboardID}}, users)
+	_, err := svc.AddShare(contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com")), testShareDashboardID, upper)
+	wantValidationError(t, err)
+	if repo.addCalled {
+		t.Error("the caller's own upper-case id was written as a share")
 	}
 }

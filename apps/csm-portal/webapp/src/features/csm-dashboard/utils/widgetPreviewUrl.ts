@@ -360,10 +360,11 @@ export function buildWidgetPreviewHref(params: {
       // with no `rating` param in the URL at all.
       q.set(key, String(value));
     } else if (typeof value === "boolean") {
-      // A flat boolean filter (an account search's `hasProject` / `active`)
-      // was dropped silently too, widening the preview list past what the
-      // tile counted. It round-trips as "true" / "false"; the resourceType's
-      // own `buildSearchRequestBody` turns it back into a boolean.
+      // A flat boolean filter (an account search's `hasProject` / `active`,
+      // a user search's `active`) was dropped silently too, widening the
+      // preview list past what the tile counted. It round-trips as "true" /
+      // "false"; the resourceType's own `buildSearchRequestBody` turns it
+      // back into a boolean (`account`, `user`).
       q.set(key, String(value));
     }
   }

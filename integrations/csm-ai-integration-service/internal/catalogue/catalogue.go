@@ -69,6 +69,8 @@ func NewCode(file string) (Source, error) {
 	return newSource("code catalogue", codeEmbedded, file)
 }
 
+// newSource is a catalogue source for file (trimmed; empty means the built-in
+// copy), read once now so a missing or empty file fails at startup.
 func newSource(name, embedded, file string) (Source, error) {
 	s := Source{name: name, embedded: embedded, file: strings.TrimSpace(file)}
 	if _, err := s.Text(); err != nil {

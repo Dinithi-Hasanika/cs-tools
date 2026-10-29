@@ -51,6 +51,9 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
 
+// main loads the configuration, builds every upstream client and handler,
+// registers the routes and serves until SIGINT or SIGTERM, then shuts down
+// gracefully. Invalid required configuration stops the start.
 func main() {
 	loadDotEnv(".env")
 	middleware.ConfigureLogger()

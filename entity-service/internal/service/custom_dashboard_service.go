@@ -166,7 +166,9 @@ func validateCustomDashboardID(id string) error {
 
 // normalizeCustomDashboard trims the name and checks both fields against the
 // limits migration 0251 enforces, so a bad request is a 400 rather than a
-// constraint error. The definition is stored as sent: it is opaque here.
+// constraint error. A NUL character is refused too: PostgreSQL text cannot
+// hold one, so it would otherwise fail at the insert as a 500. The definition
+// is stored as sent: it is opaque here.
 func normalizeCustomDashboard(req domain.SaveCustomDashboardRequest) (domain.SaveCustomDashboardRequest, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -179,6 +181,9 @@ func normalizeCustomDashboard(req domain.SaveCustomDashboardRequest) (domain.Sav
 	}
 	if strings.TrimSpace(req.Definition) == "" {
 		return req, &apierror.ValidationError{Msg: "definition is required"}
+	}
+	if strings.ContainsRune(name, 0) || strings.ContainsRune(req.Definition, 0) {
+		return req, &apierror.ValidationError{Msg: "name and definition must not contain NUL characters"}
 	}
 	if len(req.Definition) > domain.MaxCustomDashboardDefinitionBytes {
 		return req, &apierror.ValidationError{

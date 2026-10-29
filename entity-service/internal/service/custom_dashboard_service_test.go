@@ -183,6 +183,8 @@ func TestCustomDashboardService_Save_RejectsBadInput(t *testing.T) {
 		"name too long":      {testCustomDashboardID, domain.SaveCustomDashboardRequest{Name: strings.Repeat("é", domain.MaxCustomDashboardNameLength+1), Definition: "{}"}},
 		"blank definition":   {testCustomDashboardID, domain.SaveCustomDashboardRequest{Name: "X", Definition: " \n "}},
 		"definition too big": {testCustomDashboardID, domain.SaveCustomDashboardRequest{Name: "X", Definition: strings.Repeat("a", domain.MaxCustomDashboardDefinitionBytes+1)}},
+		"NUL in name":        {testCustomDashboardID, domain.SaveCustomDashboardRequest{Name: "a\x00b", Definition: "{}"}},
+		"NUL in definition":  {testCustomDashboardID, domain.SaveCustomDashboardRequest{Name: "X", Definition: "{\"a\":\"\x00\"}"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

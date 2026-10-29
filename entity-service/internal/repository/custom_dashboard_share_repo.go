@@ -66,6 +66,8 @@ func NewCustomDashboardShareRepository(db *pgxpool.Pool) CustomDashboardShareRep
 // dashboardShareUserName is a user's display name, as elsewhere in this package.
 const dashboardShareUserName = `COALESCE(%[1]s.name, NULLIF(TRIM(CONCAT_WS(' ', %[1]s.first_name, %[1]s.last_name)), ''), '')`
 
+// dashboardShareUserRef is the user reference for a share row; the zero value
+// when the row carries no id.
 func dashboardShareUserRef(id, email, name string) domain.UserReference {
 	if ref := domain.NewUserReference(id, email, name); ref != nil {
 		return *ref
@@ -73,6 +75,8 @@ func dashboardShareUserRef(id, email, name string) domain.UserReference {
 	return domain.UserReference{}
 }
 
+// ListShares is the users the owner's dashboard is shared with, ordered by
+// display name; empty when the dashboard is not the owner's or has no shares.
 func (r *customDashboardShareRepo) ListShares(ctx context.Context, ownerID, dashboardID string) ([]domain.CustomDashboardShare, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT u.id::text, COALESCE(u.email, ''), `+fmt.Sprintf(dashboardShareUserName, "u")+`, s.created_on
@@ -102,6 +106,9 @@ func (r *customDashboardShareRepo) ListShares(ctx context.Context, ownerID, dash
 	return out, nil
 }
 
+// AddShare shares the owner's dashboard with userID; sharing again is not an
+// error. The result is false when the dashboard is not the owner's, and an
+// unknown user is a NotFoundError.
 func (r *customDashboardShareRepo) AddShare(ctx context.Context, ownerID, dashboardID, userID string) (bool, error) {
 	// One statement: the insert only happens for the owner's own dashboard,
 	// and the result says whether that dashboard exists, shared before or not.
@@ -127,6 +134,8 @@ func (r *customDashboardShareRepo) AddShare(ctx context.Context, ownerID, dashbo
 	return owned, nil
 }
 
+// RemoveShare stops sharing the owner's dashboard with userID; false when the
+// dashboard is not the owner's or was not shared with that user.
 func (r *customDashboardShareRepo) RemoveShare(ctx context.Context, ownerID, dashboardID, userID string) (bool, error) {
 	tag, err := r.db.Exec(ctx,
 		`DELETE FROM custom_dashboard_share s
@@ -169,6 +178,9 @@ const sharedWithUserFrom = `
 		 JOIN "user" o ON o.id = d.owner_user_id
 		 WHERE TRUE`
 
+// ListSharedWithUser is the dashboards shared with userID, directly or through
+// a team they are in now, without definitions, ordered by name. Each comes
+// once, with the share that grants it (see sharedWithUserFrom).
 func (r *customDashboardShareRepo) ListSharedWithUser(ctx context.Context, userID string) ([]domain.SharedCustomDashboardSummary, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT d.id::text, d.name, o.id::text, COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on, `+sharedViaTeamColumns+
@@ -197,6 +209,8 @@ func (r *customDashboardShareRepo) ListSharedWithUser(ctx context.Context, userI
 	return out, nil
 }
 
+// GetSharedWithUser is one dashboard shared with userID, with its definition;
+// nil when it is not shared with them (or they own it).
 func (r *customDashboardShareRepo) GetSharedWithUser(ctx context.Context, userID, dashboardID string) (*domain.SharedCustomDashboard, error) {
 	var ownerID, ownerEmail, ownerName string
 	var teamID, teamName, teamType *string

@@ -36,6 +36,9 @@ import (
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-ai-integration-service/internal/middleware"
 )
 
+// main reads the configuration, loads the catalogues, serves the routes and,
+// on SIGINT or SIGTERM, shuts down after in-flight requests finish (see
+// shutdownTimeout). A bad setting or an unreadable catalogue file stops the start.
 func main() {
 	loadDotEnv(".env")
 	middleware.ConfigureLogger()
@@ -149,6 +152,7 @@ func shutdownTimeout(modelTimeout time.Duration) time.Duration {
 	return modelTimeout + 15*time.Second
 }
 
+// envOrDefault is the environment variable key, or def when it is unset or empty.
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

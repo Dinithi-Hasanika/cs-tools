@@ -55,6 +55,8 @@ func NewCustomDashboardTeamShareRepository(db *pgxpool.Pool) CustomDashboardTeam
 	return &customDashboardTeamShareRepo{db: db}
 }
 
+// ListTeamShares is the teams the owner's dashboard is shared with, ordered by
+// name; empty when the dashboard is not the owner's or has no team shares.
 func (r *customDashboardTeamShareRepo) ListTeamShares(ctx context.Context, ownerID, dashboardID string) ([]domain.CustomDashboardTeamShare, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT t.id::text, t.name, t.type, s.created_on
@@ -82,6 +84,9 @@ func (r *customDashboardTeamShareRepo) ListTeamShares(ctx context.Context, owner
 	return out, nil
 }
 
+// AddTeamShare shares the owner's dashboard with teamID; sharing again is not
+// an error. The result is false when the dashboard is not the owner's, and an
+// unknown team is a NotFoundError.
 func (r *customDashboardTeamShareRepo) AddTeamShare(ctx context.Context, ownerID, dashboardID, teamID string) (bool, error) {
 	// One statement, as AddShare: the insert only happens for the owner's own
 	// dashboard, and the result says whether that dashboard exists.
@@ -107,6 +112,8 @@ func (r *customDashboardTeamShareRepo) AddTeamShare(ctx context.Context, ownerID
 	return owned, nil
 }
 
+// RemoveTeamShare stops sharing the owner's dashboard with teamID; false when
+// the dashboard is not the owner's or was not shared with that team.
 func (r *customDashboardTeamShareRepo) RemoveTeamShare(ctx context.Context, ownerID, dashboardID, teamID string) (bool, error) {
 	tag, err := r.db.Exec(ctx,
 		`DELETE FROM custom_dashboard_team_share s

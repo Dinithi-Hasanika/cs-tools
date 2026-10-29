@@ -60,6 +60,8 @@ func (s *customDashboardTeamShareService) ownedDashboard(ctx context.Context, da
 	return ownerID, nil
 }
 
+// ListTeamShares is the teams the caller's dashboard is shared with; a
+// NotFoundError when it is not the caller's.
 func (s *customDashboardTeamShareService) ListTeamShares(ctx context.Context, dashboardID string) (domain.CustomDashboardTeamShareList, error) {
 	ownerID, err := s.ownedDashboard(ctx, dashboardID)
 	if err != nil {
@@ -68,6 +70,7 @@ func (s *customDashboardTeamShareService) ListTeamShares(ctx context.Context, da
 	return s.teamShareList(ctx, ownerID, dashboardID)
 }
 
+// teamShareList is the dashboard's team shares, never nil.
 func (s *customDashboardTeamShareService) teamShareList(ctx context.Context, ownerID, dashboardID string) (domain.CustomDashboardTeamShareList, error) {
 	shares, err := s.shares.ListTeamShares(ctx, ownerID, dashboardID)
 	if err != nil {
@@ -101,6 +104,9 @@ func (s *customDashboardTeamShareService) AddTeamShare(ctx context.Context, dash
 	return s.teamShareList(ctx, ownerID, dashboardID)
 }
 
+// RemoveTeamShare stops sharing the caller's dashboard with teamID; a
+// NotFoundError when the dashboard is not the caller's or was not shared
+// with that team.
 func (s *customDashboardTeamShareService) RemoveTeamShare(ctx context.Context, dashboardID, teamID string) error {
 	if err := validateShareTeamID(teamID); err != nil {
 		return err

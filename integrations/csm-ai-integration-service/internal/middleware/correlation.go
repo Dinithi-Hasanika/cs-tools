@@ -74,6 +74,8 @@ func CorrelationIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// newCorrelationID is a random version 4 UUID; it panics only if the system's
+// random source fails.
 func newCorrelationID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -96,6 +98,8 @@ func (h ctxHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.inner.Enabled(ctx, level)
 }
 
+// Handle adds the request's correlation ID to the record, when the context
+// carries one, and passes it to the wrapped handler.
 func (h ctxHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := CorrelationIDFromContext(ctx); id != "" {
 		r.AddAttrs(slog.String("correlationID", id))

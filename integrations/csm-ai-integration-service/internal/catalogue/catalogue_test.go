@@ -23,13 +23,10 @@ import (
 	"testing"
 )
 
-func TestBuiltInCatalogues(t *testing.T) {
+func TestBuiltInCatalogue(t *testing.T) {
 	if text := DashboardEmbedded(); !strings.HasPrefix(text, "# CSM Portal dashboard catalogue") ||
 		!strings.Contains(text, "## 1. Output contract") || !strings.Contains(text, "## 2. Dashboard object") {
 		t.Errorf("built-in dashboard catalogue starts with %q, want the catalogue", firstLine(text))
-	}
-	if strings.TrimSpace(CodeEmbedded()) == "" || CodeEmbedded() == DashboardEmbedded() {
-		t.Error("built-in code catalogue is empty or the dashboard one")
 	}
 }
 
@@ -39,18 +36,11 @@ func TestNoFileIsTheBuiltInCopy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewDashboard(%q): %v", file, err)
 		}
-		c, err := NewCode(file)
-		if err != nil {
-			t.Fatalf("NewCode(%q): %v", file, err)
-		}
-		if d.Origin() != "built-in" || c.Origin() != "built-in" {
-			t.Errorf("origins = %q, %q, want built-in", d.Origin(), c.Origin())
+		if d.Origin() != "built-in" {
+			t.Errorf("origin = %q, want built-in", d.Origin())
 		}
 		if text, _ := d.Text(); text != DashboardEmbedded() {
 			t.Error("dashboard Text() is not the built-in catalogue")
-		}
-		if text, _ := c.Text(); text != CodeEmbedded() {
-			t.Error("code Text() is not the built-in catalogue")
 		}
 	}
 }
@@ -82,9 +72,6 @@ func TestAMissingOrEmptyFileFailsTheStart(t *testing.T) {
 	for name, path := range map[string]string{"missing": filepath.Join(dir, "nope.md"), "empty": empty} {
 		if _, err := NewDashboard(path); err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "dashboard catalogue") {
 			t.Errorf("dashboard, %s: err = %v, want an error naming the catalogue and %s", name, err, path)
-		}
-		if _, err := NewCode(path); err == nil || !strings.Contains(err.Error(), "code catalogue") {
-			t.Errorf("code, %s: err = %v, want an error naming the code catalogue", name, err)
 		}
 	}
 }

@@ -32,7 +32,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Enabled() || c.Model != defaultClaudeModel || c.Timeout != defaultClaudeTimeout ||
-		c.BaseURL != "" || c.CatalogueFile != "" || c.CodeCatalogueFile != "" {
+		c.BaseURL != "" || c.CatalogueFile != "" {
 		t.Errorf("defaults = %+v", c)
 	}
 	if c.GatewayHost() != "none" {
@@ -42,18 +42,17 @@ func TestLoadConfigDefaults(t *testing.T) {
 
 func TestLoadConfigReadsAndTrimsEveryVariable(t *testing.T) {
 	c, err := loadConfig(env(map[string]string{
-		"ANTHROPIC_API_KEY":   " key\n",
-		"CLAUDE_MODEL":        " claude-opus-5-5 ",
-		"CLAUDE_TIMEOUT":      "90s",
-		"CLAUDE_BASE_URL":     " https://gateway.example.test/v1/anthropic?x=1 ",
-		"CATALOGUE_FILE":      " /mnt/catalogue.md ",
-		"CODE_CATALOGUE_FILE": "/mnt/code.md",
+		"ANTHROPIC_API_KEY": " key\n",
+		"CLAUDE_MODEL":      " claude-opus-5-5 ",
+		"CLAUDE_TIMEOUT":    "90s",
+		"CLAUDE_BASE_URL":   " https://gateway.example.test/v1/anthropic?x=1 ",
+		"CATALOGUE_FILE":    " /mnt/catalogue.md ",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := config{APIKey: "key", Model: "claude-opus-5-5", Timeout: 90 * time.Second,
-		BaseURL: "https://gateway.example.test/v1/anthropic?x=1", CatalogueFile: "/mnt/catalogue.md", CodeCatalogueFile: "/mnt/code.md"}
+		BaseURL: "https://gateway.example.test/v1/anthropic?x=1", CatalogueFile: "/mnt/catalogue.md"}
 	if c != want {
 		t.Errorf("config = %+v, want %+v", c, want)
 	}
@@ -120,21 +119,6 @@ func TestWriteTimeoutLeavesRoomForTheModelCall(t *testing.T) {
 	} {
 		if got := writeTimeout(model); got != want {
 			t.Errorf("writeTimeout(%v) = %v, want %v", model, got, want)
-		}
-	}
-}
-
-func TestCodeGenerationIsOnOnlyForExactlyTrue(t *testing.T) {
-	for raw, want := range map[string]bool{
-		"": false, "false": false, "1": false, "TRUE": false, "True": false, "yes": false, "on": false,
-		"true": true, " true ": true,
-	} {
-		c, err := loadConfig(env(map[string]string{"DASHBOARD_GENERATE_CODE_ENABLED": raw}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if c.CodeGenerationEnabled != want {
-			t.Errorf("DASHBOARD_GENERATE_CODE_ENABLED=%q: enabled %v, want %v", raw, c.CodeGenerationEnabled, want)
 		}
 	}
 }

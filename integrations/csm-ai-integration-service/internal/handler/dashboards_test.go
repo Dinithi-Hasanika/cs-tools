@@ -131,7 +131,7 @@ func draftOfSize(n int) string {
 }
 
 func TestGenerateWithoutAKeyIsNotConfigured(t *testing.T) {
-	status, out := post(t, NewDashboardHandler(nil, nil), `{"prompt":"p"}`)
+	status, out := post(t, NewDashboardHandler(nil), `{"prompt":"p"}`)
 	if status != http.StatusServiceUnavailable || out["code"] != CodeNotConfigured {
 		t.Errorf("status %d body %v, want 503 not_configured", status, out)
 	}
@@ -167,78 +167,6 @@ func TestGenerateMapsEveryError(t *testing.T) {
 		if msg, _ := out["message"].(string); strings.Contains(msg, "bad key") || msg == "" {
 			t.Errorf("%v: message %q, want a fixed message without upstream detail", tc.err, msg)
 		}
-	}
-}
-
-type fakeCodeGenerator struct {
-	res             dashboards.CodeResult
-	err             error
-	prompt, current string
-	calls           int
-}
-
-func (f *fakeCodeGenerator) Generate(_ context.Context, prompt, current string) (dashboards.CodeResult, error) {
-	f.calls++
-	f.prompt, f.current = prompt, current
-	return f.res, f.err
-}
-
-func postCode(t *testing.T, h *DashboardHandler, body string) (int, map[string]any) {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	h.GenerateCode(rec, httptest.NewRequest(http.MethodPost, "/ai/dashboards/generate-code", strings.NewReader(body)))
-	var out map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("response %q is not JSON: %v", rec.Body.String(), err)
-	}
-	return rec.Code, out
-}
-
-func TestGenerateCodeReturnsTheSourceAndReply(t *testing.T) {
-	gen := &fakeCodeGenerator{res: dashboards.CodeResult{Source: "async function render() {}\n", Reply: "Done.", InputTokens: 7, OutputTokens: 3}}
-	status, out := postCode(t, &DashboardHandler{codeGenerator: gen}, `{"prompt":" Add a list ","current":"function render(){}"}`)
-	if status != http.StatusOK || out["source"] != "async function render() {}\n" || out["reply"] != "Done." || out["declined"] != nil {
-		t.Fatalf("status %d body %v", status, out)
-	}
-	if u, _ := out["usage"].(map[string]any); u["inputTokens"] != float64(7) {
-		t.Errorf("usage = %v", out["usage"])
-	}
-	if gen.prompt != "Add a list" || gen.current != "function render(){}" {
-		t.Errorf("generator got %q, %q", gen.prompt, gen.current)
-	}
-}
-
-func TestGenerateCodeReturnsTheDecline(t *testing.T) {
-	gen := &fakeCodeGenerator{res: dashboards.CodeResult{Declined: "Not expressible."}}
-	status, out := postCode(t, &DashboardHandler{codeGenerator: gen}, `{"prompt":"p"}`)
-	if status != http.StatusOK || out["declined"] != "Not expressible." || out["source"] != nil {
-		t.Errorf("status %d body %v, want 200 with the decline only", status, out)
-	}
-}
-
-func TestGenerateCodeRejectsABadRequestWithoutACall(t *testing.T) {
-	for name, body := range map[string]string{
-		"not JSON":      `x`,
-		"unknown field": `{"prompt":"p","draft":{}}`,
-		"empty prompt":  `{"prompt":""}`,
-		"long prompt":   `{"prompt":"` + strings.Repeat("a", promptMaxLength+1) + `"}`,
-		"long current":  `{"prompt":"p","current":"` + strings.Repeat("é", dashboards.CodeMaxLength+1) + `"}`,
-	} {
-		gen := &fakeCodeGenerator{}
-		status, out := postCode(t, &DashboardHandler{codeGenerator: gen}, body)
-		if status != http.StatusBadRequest || out["code"] != CodeInvalidRequest || gen.calls != 0 {
-			t.Errorf("%s: status %d body %v calls %d, want 400 and no call", name, status, out, gen.calls)
-		}
-	}
-}
-
-func TestGenerateCodeErrorsAndNotConfigured(t *testing.T) {
-	if status, out := postCode(t, NewDashboardHandler(nil, nil), `{"prompt":"p"}`); status != http.StatusServiceUnavailable || out["code"] != CodeNotConfigured {
-		t.Errorf("no key: status %d body %v", status, out)
-	}
-	status, out := postCode(t, &DashboardHandler{codeGenerator: &fakeCodeGenerator{err: fmt.Errorf("%w: no code block", dashboards.ErrUnusable)}}, `{"prompt":"p"}`)
-	if status != http.StatusBadGateway || out["code"] != CodeUnusable {
-		t.Errorf("unusable: status %d body %v", status, out)
 	}
 }
 

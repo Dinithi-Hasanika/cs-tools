@@ -14,9 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package dashboards asks the model for a dashboard: a definition (POST
-// /ai/dashboards/generate, this file) or JavaScript code (POST
-// /ai/dashboards/generate-code, code.go). It builds the prompt (the dashboard catalogue
+// Package dashboards asks the model for a dashboard definition (POST
+// /ai/dashboards/generate). It builds the prompt (the dashboard catalogue
 // plus the Teams section as the system prompt; the user's prompt, and on a
 // follow-up the draft being edited, as the user message), makes the call and
 // reads the reply into the JSON objects it holds. Whether one of them is a

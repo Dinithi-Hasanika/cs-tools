@@ -105,6 +105,8 @@ func TestGenerateRejectsABadRequestWithoutACall(t *testing.T) {
 		"draft an array": `{"prompt":"p","draft":[1]}`,
 		"team no key":    `{"prompt":"p","teams":[{"name":"Rigel","field":"creTeam"}]}`,
 		"team pipe":      `{"prompt":"p","teams":[{"key":"r","name":"Ri|gel","field":"creTeam"}]}`,
+		"team field":     `{"prompt":"p","teams":[{"key":"r","name":"Rigel","field":"accountId"}]}`,
+		"team family":    `{"prompt":"p","teams":[{"key":"r","name":"Rigel","family":"sme","field":"creTeam"}]}`,
 		"body too big":   `{"prompt":"p","draft":{"x":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}}`,
 	} {
 		gen := &fakeGenerator{}
@@ -228,5 +230,15 @@ func TestGenerateCodeErrorsAndNotConfigured(t *testing.T) {
 	status, out := postCode(t, &DashboardHandler{codeGenerator: &fakeCodeGenerator{err: fmt.Errorf("%w: no code block", dashboards.ErrUnusable)}}, `{"prompt":"p"}`)
 	if status != http.StatusBadGateway || out["code"] != CodeUnusable {
 		t.Errorf("unusable: status %d body %v", status, out)
+	}
+}
+
+func TestGenerateAcceptsEveryKnownFamilyAndNone(t *testing.T) {
+	for _, family := range []string{"", "cre-abt", "cre", "sre-abt", "sre"} {
+		gen := &fakeGenerator{res: dashboards.Result{Candidates: []json.RawMessage{json.RawMessage(`{}`)}}}
+		body := `{"prompt":"p","teams":[{"key":"r","name":"Rigel","family":"` + family + `","field":"sreTeam"}]}`
+		if status, out := post(t, &DashboardHandler{generator: gen}, body); status != http.StatusOK {
+			t.Errorf("family %q: status %d body %v, want 200", family, status, out)
+		}
 	}
 }

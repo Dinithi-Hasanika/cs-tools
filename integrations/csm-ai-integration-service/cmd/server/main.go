@@ -123,7 +123,9 @@ func main() {
 	<-ctx.Done()
 	stop()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// Wait for in-flight requests, which can include a model call of up to
+	// CLAUDE_TIMEOUT, before exiting.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout(cfg.Timeout))
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "err", err)
@@ -137,6 +139,14 @@ func main() {
 // minutes.
 func writeTimeout(modelTimeout time.Duration) time.Duration {
 	return max(2*time.Minute, modelTimeout+time.Minute)
+}
+
+// shutdownTimeout is how long a shutdown waits for in-flight requests: a
+// model call can run for the whole model timeout, plus 15 seconds to write
+// its reply. The platform's termination grace period must be at least this
+// long for the wait to help.
+func shutdownTimeout(modelTimeout time.Duration) time.Duration {
+	return modelTimeout + 15*time.Second
 }
 
 func envOrDefault(key, def string) string {

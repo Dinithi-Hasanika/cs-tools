@@ -95,11 +95,11 @@ describe("CsmDashboardsLayout", () => {
     expect(screen.getByText("shared page")).toBeInTheDocument();
   });
 
-  it("offers only System Dashboards to someone without write access", () => {
+  it("offers System and Shared Dashboards, not My Dashboards, to someone without write access", () => {
     mockCanWrite = false;
     renderAt("/dashboard");
 
-    expect(tabNames()).toEqual(["System Dashboards"]);
+    expect(tabNames()).toEqual(["System Dashboards", "Shared Dashboards"]);
     expect(selectedTab()).toBe("System Dashboards");
   });
 });

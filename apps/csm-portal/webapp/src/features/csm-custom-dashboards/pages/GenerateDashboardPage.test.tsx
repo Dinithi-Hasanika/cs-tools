@@ -216,6 +216,18 @@ describe("GenerateDashboardPage: the chat", () => {
     expect(screen.getByText("Your dashboard will appear here")).toBeInTheDocument();
   });
 
+  it.each([
+    [429, "You've sent a lot of messages in a short time. Try again in 42 seconds."],
+    [413, "The dashboard being edited is too large to change in the chat. Start a new one."],
+  ])("shows the backend's message for a %d", async (status, message) => {
+    generateMock.mockRejectedValueOnce(new BackendApiError(status, message));
+    renderPage();
+
+    await sendMessage("My cases", message);
+
+    expect(screen.queryByText("The dashboard cannot be generated from the input.")).not.toBeInTheDocument();
+  });
+
   it("keeps the preview when a follow-up message fails", async () => {
     generateMock
       .mockResolvedValueOnce({ dashboard: dashboard("My Cases"), reply: "Here it is." })

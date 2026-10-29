@@ -325,6 +325,7 @@ func TestGenerateDashboard_MapsEachGeneratorError(t *testing.T) {
 		wantMsg    string
 	}{
 		{"invalid draft", fmt.Errorf("%w: bad", errDraftInvalid), http.StatusBadRequest, errMsgGenerateDraftInvalid},
+		{"draft too large", fmt.Errorf("%w: 70000 bytes", errDraftTooLarge), http.StatusRequestEntityTooLarge, errMsgGenerateDraftTooBig},
 		{"declined", &generateDeclinedError{Reason: "Resolution time per engineer is not in the catalogue."}, http.StatusUnprocessableEntity, "Resolution time per engineer is not in the catalogue."},
 		{"refused", errGenerateRefused, http.StatusUnprocessableEntity, errMsgGenerateRefused},
 		{"team filter", fmt.Errorf("%w: widgets[0]: unknown team %q (known teams: rigel, sirius)", errDashboardTeam, "orion"), http.StatusUnprocessableEntity, `Unknown team "orion" (known teams: rigel, sirius).`},

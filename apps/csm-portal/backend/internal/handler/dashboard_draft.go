@@ -28,6 +28,15 @@ import (
 // errDraftInvalid marks a draft that is not a dashboard in the served form.
 var errDraftInvalid = errors.New("invalid dashboard draft")
 
+// errDraftTooLarge marks a draft whose definition is over
+// generateDraftMaxBytes.
+var errDraftTooLarge = errors.New("dashboard draft too large")
+
+// generateDraftMaxBytes caps the draft sent with a generate call (64 KiB), the
+// size entity-service allows a saved definition: a dashboard that could be
+// saved always fits, and it bounds what one call can send the model.
+const generateDraftMaxBytes = 64 << 10
+
 // draftToDefinition turns the generate page's draft (the "current" field of
 // POST /dashboards/generate) back into the dashboard file format a definition
 // is authored in, for the model to edit.

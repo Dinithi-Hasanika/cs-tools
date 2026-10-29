@@ -71,6 +71,9 @@ func (g *serviceDashboardGenerator) Generate(ctx context.Context, prompt string,
 	if err != nil {
 		return GeneratedDashboard{}, err
 	}
+	if len(draft) > generateDraftMaxBytes {
+		return GeneratedDashboard{}, fmt.Errorf("%w: %d bytes", errDraftTooLarge, len(draft))
+	}
 	res, err := g.client.GenerateDashboard(ctx, csmai.DashboardRequest{Prompt: prompt, Draft: draft, Teams: g.teams})
 	if err != nil {
 		return GeneratedDashboard{}, serviceGenerateError(err)

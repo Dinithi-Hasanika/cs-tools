@@ -80,14 +80,14 @@ const BEN: User = { id: "ben", userName: "ben", name: "Ben Bee", email: "ben@exa
 const CUSTOMER: User = { id: "cust", userName: "cust", name: "John Smith", email: "john@example.com", userType: "customer" };
 
 // The registry teams as POST /teams/search lists them: Orion has no group, so
-// it can't be shared with; Asgardeo is not a registry team (no family).
+// it can't be shared with; Specialists is not a registry team (no family).
 const TEAMS: Team[] = [
   { id: "rigel", name: "Rigel", family: "cre-abt", creGroupId: "g-rigel" },
   { id: "apollo", name: "Apollo", family: "sre-abt", sreGroupId: "g-apollo" },
   { id: "americas", name: "Americas", family: "cre", creGroupId: "g-americas" },
   { id: "castor", name: "Castor", family: "cre-abt", creGroupId: "g-castor" },
   { id: "orion", name: "Orion", family: "cre-abt" },
-  { id: "3a019d7a-293f-40a6-9d9d-96b80eb0e179", name: "Asgardeo" },
+  { id: "specialists", name: "Specialists" },
 ];
 
 function showTeams(): void {

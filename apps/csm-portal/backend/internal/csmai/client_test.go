@@ -120,21 +120,6 @@ func TestGenerateDashboardSendsAnEmptyTeamListAndNoDraft(t *testing.T) {
 	}
 }
 
-func TestGenerateCode(t *testing.T) {
-	var got map[string]any
-	f := &fakeService{handle: func(w http.ResponseWriter, _ *http.Request, body []byte) {
-		_ = json.Unmarshal(body, &got)
-		_, _ = io.WriteString(w, `{"source":"async function render() {}\n","reply":"Done.","usage":{"inputTokens":1,"outputTokens":1}}`)
-	}}
-	res, err := newTestClient(t, f, 5*time.Second).GenerateCode(context.Background(), CodeRequest{Prompt: "p", Current: "old"})
-	if err != nil || res.Source != "async function render() {}\n" || res.Reply != "Done." {
-		t.Fatalf("res %+v err %v", res, err)
-	}
-	if f.lastPath.Load() != "POST /ai/dashboards/generate-code" || got["current"] != "old" {
-		t.Errorf("path %v body %v", f.lastPath.Load(), got)
-	}
-}
-
 func TestAnErrorKeepsTheStatusAndCode(t *testing.T) {
 	for _, tc := range []struct {
 		status int
@@ -170,7 +155,7 @@ func TestATimeoutOrBadAnswerIsErrCall(t *testing.T) {
 		t.Errorf("slow: err = %v, want ErrCall wrapping a timeout", err)
 	}
 	garbled := &fakeService{handle: func(w http.ResponseWriter, _ *http.Request, _ []byte) { _, _ = io.WriteString(w, "not json") }}
-	if _, err := newTestClient(t, garbled, 5*time.Second).GenerateCode(context.Background(), CodeRequest{Prompt: "p"}); !errors.Is(err, ErrCall) {
+	if _, err := newTestClient(t, garbled, 5*time.Second).GenerateDashboard(context.Background(), DashboardRequest{Prompt: "p"}); !errors.Is(err, ErrCall) {
 		t.Errorf("garbled: err = %v, want ErrCall", err)
 	}
 }

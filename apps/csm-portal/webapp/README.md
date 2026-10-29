@@ -242,10 +242,9 @@ Edit your copy with values for your environment. The template (`public/config.js
 | `CSM_PORTAL_MOBILE_APP_INCLUDE_TABLETS` | boolean, `false` | Also show the banner on tablets | `false` |
 | `CSM_PORTAL_ANNOUNCEMENT_TEST_PROJECT_KEY` | string, built-in default | Project key in which an announcement's "Send test" dry run creates its single test case. Override only if the environment needs a different sandbox project | `YOUR-TEST-PROJECT` |
 | `CSM_MIGRATION_ONBOARDING_STATUS_ENABLED` | boolean or `"true"`/`"false"` string, **on** | Customer-onboarding status column on a project's Contacts tab (worst step status per contact, with step detail on hover). In the current code the column is on unless this is explicitly `false` / `"false"`; when off, no column is rendered and no request is made. The backend gates `GET /projects/{id}/onboarding-steps` under the same flag name, so both sides must agree | `false` |
-| `DASHBOARD_GENERATE_CODE_ENABLED` | boolean or `"true"` string, **off** | The code approach to dashboard generation (phase 2): My Dashboards' "Generate AI Code (Experimental)" button and the `/dashboard/my/new-code` page. Only `true` / `"true"` turns it on; off (the default) renders no button and sends the page's URL to the 404 page. The backend (`POST /dashboards/generate-code`) and csm-ai-integration-service (`POST /ai/dashboards/generate-code`) gate their routes under the same flag name, so all three must be on together | `true` |
 | `CSM_PORTAL_DEV_BYPASS_ACCESS_CHECK` | boolean, `false` | **Local development only.** Skips the post-sign-in authorization checks (portal-role gate and per-section capability checks) for an account the backend has not provisioned. Authentication is unaffected. Set it only in your own git-ignored `config.js`, never in a shared or deployed one | `true` |
 
-Boolean flags should be real booleans in `config.js`; `CSM_PORTAL_FEATURE_OVERRIDES`, `CSM_MIGRATION_ONBOARDING_STATUS_ENABLED` and `DASHBOARD_GENERATE_CODE_ENABLED` additionally tolerate string values for platforms that inject configuration as strings.
+Boolean flags should be real booleans in `config.js`; `CSM_PORTAL_FEATURE_OVERRIDES` and `CSM_MIGRATION_ONBOARDING_STATUS_ENABLED` additionally tolerate string values for platforms that inject configuration as strings.
 
 ---
 

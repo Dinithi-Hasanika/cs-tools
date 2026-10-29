@@ -16,8 +16,8 @@
 
 // Package csmai is the client for integrations/csm-ai-integration-service,
 // the service that holds every model call of the CSM platform. This backend
-// holds no model client of its own: the dashboard generators send the
-// prompt, the draft and the team list there and judge what comes back
+// holds no model client of its own: the dashboard generator sends the
+// prompt, the draft and the team list there and judges what comes back
 // (handler.serviceDashboardGenerator). It also backs GET
 // /health/dependencies.
 package csmai
@@ -45,7 +45,7 @@ import (
 var tokenFetchTimeout = 5 * time.Second
 
 // maxResponseBytes caps a response read from the service (a generated
-// dashboard or code source is far below it).
+// dashboard is far below it).
 const maxResponseBytes = 4 << 20
 
 // Error codes the service answers with (its "code"). See the service's
@@ -151,29 +151,6 @@ func (c *Client) GenerateDashboard(ctx context.Context, req DashboardRequest) (D
 	}
 	var res DashboardResult
 	err := c.post(ctx, "/ai/dashboards/generate", req, &res)
-	return res, err
-}
-
-// CodeRequest is one chat message of the code approach. Current is the
-// source being edited, or "".
-type CodeRequest struct {
-	Prompt  string `json:"prompt"`
-	Current string `json:"current,omitempty"`
-}
-
-// CodeResult is the model's answer: its decline sentence, or the source and
-// the chat sentence.
-type CodeResult struct {
-	Declined string `json:"declined"`
-	Source   string `json:"source"`
-	Reply    string `json:"reply"`
-	Usage    Usage  `json:"usage"`
-}
-
-// GenerateCode makes one POST /ai/dashboards/generate-code.
-func (c *Client) GenerateCode(ctx context.Context, req CodeRequest) (CodeResult, error) {
-	var res CodeResult
-	err := c.post(ctx, "/ai/dashboards/generate-code", req, &res)
 	return res, err
 }
 

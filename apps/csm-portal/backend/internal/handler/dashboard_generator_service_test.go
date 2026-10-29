@@ -31,21 +31,14 @@ const validGenerated = `{"displayName":"Top Customers by Open Cases","type":"cs"
 "query":{"filters":[{"field":"state","op":"notIn","values":["closed"]}]},"groupBy":{"field":"account","maxGroups":10}}]}`
 
 type fakeAIClient struct {
-	res     csmai.DashboardResult
-	code    csmai.CodeResult
-	err     error
-	gotReq  csmai.DashboardRequest
-	gotCode csmai.CodeRequest
+	res    csmai.DashboardResult
+	err    error
+	gotReq csmai.DashboardRequest
 }
 
 func (f *fakeAIClient) GenerateDashboard(_ context.Context, req csmai.DashboardRequest) (csmai.DashboardResult, error) {
 	f.gotReq = req
 	return f.res, f.err
-}
-
-func (f *fakeAIClient) GenerateCode(_ context.Context, req csmai.CodeRequest) (csmai.CodeResult, error) {
-	f.gotCode = req
-	return f.code, f.err
 }
 
 func TestServiceGenerator_KeepsTheLastValidCandidate(t *testing.T) {
@@ -96,19 +89,6 @@ func TestServiceGenerateError_MapsEveryCode(t *testing.T) {
 	}
 	if err := serviceGenerateError(csmai.ErrCall); !errors.Is(err, errGenerateCall) {
 		t.Errorf("transport: err = %v", err)
-	}
-}
-
-func TestServiceCodeGenerator(t *testing.T) {
-	ai := &fakeAIClient{code: csmai.CodeResult{Source: "async function render() {}\n", Reply: "Done."}}
-	got, err := NewServiceCodeDashboardGenerator(ai).Generate(context.Background(), "p", "old")
-	if err != nil || got.Source != "async function render() {}\n" || got.Reply != "Done." || ai.gotCode.Current != "old" {
-		t.Errorf("got %+v err %v request %+v", got, err, ai.gotCode)
-	}
-	var declined *generateDeclinedError
-	if _, err := NewServiceCodeDashboardGenerator(&fakeAIClient{code: csmai.CodeResult{Declined: "No."}}).
-		Generate(context.Background(), "p", ""); !errors.As(err, &declined) {
-		t.Errorf("err = %v, want the decline", err)
 	}
 }
 

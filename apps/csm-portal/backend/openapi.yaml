@@ -5413,7 +5413,8 @@ paths:
       description: >
         **Off by default (phase 2):** registered only when the deployment sets
         DASHBOARD_GENERATE_CODE_ENABLED to exactly "true"; otherwise the path
-        does not exist and answers 404. Experimental counterpart of POST
+        is not registered: a POST to it answers 405 (the path still matches
+        GET /dashboards/{dashboardId}). Experimental counterpart of POST
         /dashboards/generate: turns the
         user's latest message on the Custom Dashboards code generate page into
         dashboard source code (JavaScript defining `render(portal, root)`,

@@ -177,10 +177,42 @@ describe("ShareCustomDashboardDialog", () => {
     await waitFor(() => expect(unshareMock).toHaveBeenCalledWith({ dashboardId: DASHBOARD.id, userId: "alice" }));
   });
 
-  it("says so when the share list can't be loaded", () => {
+  it("says so when neither share list can be loaded", () => {
     sharesState = { isError: true };
+    teamSharesState = { isError: true };
     renderDialog();
     expect(screen.getByText("Could not load who this dashboard is shared with.")).toBeInTheDocument();
+  });
+
+  it("keeps the teams, and their stop buttons, when only the people list fails", () => {
+    sharesState = { isError: true };
+    teamSharesState = { data: [{ team: { key: "rigel", name: "Rigel", family: "cre-abt" }, sharedOn: "a" }] };
+    renderDialog();
+    const shared = screen.getByLabelText("Shared with");
+    expect(within(shared).getByText("Could not load the people this dashboard is shared with.")).toBeInTheDocument();
+    expect(within(shared).getByText("Rigel")).toBeInTheDocument();
+    expect(within(shared).getByRole("button", { name: "Stop sharing with team Rigel" })).toBeInTheDocument();
+    expect(within(shared).queryByText("Could not load who this dashboard is shared with.")).not.toBeInTheDocument();
+    expect(within(shared).queryByText("Not shared with anyone yet.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the people, and their stop buttons, when only the team list fails", () => {
+    sharesState = { data: [{ user: { id: "alice", email: "alice.perera@example.com", name: "Alice Perera" }, sharedOn: "a" }] };
+    teamSharesState = { isError: true };
+    renderDialog();
+    const shared = screen.getByLabelText("Shared with");
+    expect(within(shared).getByText("Could not load the teams this dashboard is shared with.")).toBeInTheDocument();
+    expect(within(shared).getByText("Alice Perera")).toBeInTheDocument();
+    expect(within(shared).getByRole("button", { name: "Stop sharing with Alice Perera" })).toBeInTheDocument();
+  });
+
+  it("does not claim the dashboard is unshared when one list failed and the other is empty", () => {
+    sharesState = { data: [] };
+    teamSharesState = { isError: true };
+    renderDialog();
+    const shared = screen.getByLabelText("Shared with");
+    expect(within(shared).getByText("Could not load the teams this dashboard is shared with.")).toBeInTheDocument();
+    expect(within(shared).queryByText("Not shared with anyone yet.")).not.toBeInTheDocument();
   });
 
   it("says so when the search fails or finds nobody", () => {

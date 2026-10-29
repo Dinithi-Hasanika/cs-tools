@@ -106,6 +106,7 @@ func widgetTemplates(views []dashboardWidgetView) []dashboard.WidgetTemplate {
 			InlineDrilldown: v.InlineDrilldown,
 			InlineLabels:    v.InlineLabels,
 			Days:            v.Days,
+			DistinctBy:      v.DistinctBy,
 		})
 	}
 	return templates

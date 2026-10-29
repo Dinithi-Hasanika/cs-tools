@@ -70,14 +70,13 @@ func TestServiceGenerator_DeclinedAndNoValidCandidate(t *testing.T) {
 
 func TestServiceGenerateError_MapsEveryCode(t *testing.T) {
 	for code, want := range map[string]error{
-		csmai.CodeNotConfigured:        ErrGenerateUnavailable,
-		csmai.CodeCatalogueUnavailable: ErrGenerateUnavailable,
-		csmai.CodeRefused:              errGenerateRefused,
-		csmai.CodeTruncated:            errGenerateTruncated,
-		csmai.CodeUnusable:             errGenerateUnusable,
-		csmai.CodeTimeout:              errGenerateCall,
-		csmai.CodeModelCallFailed:      errGenerateCall,
-		csmai.CodeInvalidRequest:       errGenerateCall,
+		csmai.CodeNotConfigured:   ErrGenerateUnavailable,
+		csmai.CodeRefused:         errGenerateRefused,
+		csmai.CodeTruncated:       errGenerateTruncated,
+		csmai.CodeUnusable:        errGenerateUnusable,
+		csmai.CodeTimeout:         errGenerateCall,
+		csmai.CodeModelCallFailed: errGenerateCall,
+		csmai.CodeInvalidRequest:  errGenerateCall,
 	} {
 		err := serviceGenerateError(&csmai.Error{StatusCode: 500, Code: code})
 		if !errors.Is(err, want) {

@@ -359,6 +359,12 @@ export function buildWidgetPreviewHref(params: {
       // existed: a rating-pie click-through landed on the unfiltered list
       // with no `rating` param in the URL at all.
       q.set(key, String(value));
+    } else if (typeof value === "boolean") {
+      // A flat boolean filter (an account search's `hasProject` / `active`)
+      // was dropped silently too, widening the preview list past what the
+      // tile counted. It round-trips as "true" / "false"; the resourceType's
+      // own `buildSearchRequestBody` turns it back into a boolean.
+      q.set(key, String(value));
     }
   }
   if (usesCaseFieldFilterShape) q.set(CASE_FILTER_MARKER, "1");

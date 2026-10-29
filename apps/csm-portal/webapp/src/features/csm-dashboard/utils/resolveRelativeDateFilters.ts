@@ -67,6 +67,11 @@ export function resolveRelativeDateFilters(
  */
 const FLAT_DATE_FILTER_KEYS = ["startDate", "endDate", "endDateFrom", "endDateTo"] as const;
 
+/**
+ * Resolves relative date placeholders in the flat date filters
+ * (FLAT_DATE_FILTER_KEYS) to plain dates. Returns `filters` itself when
+ * nothing changes, else a copy.
+ */
 function resolveFlatDateFilters(filters: Record<string, unknown>, now: Date): Record<string, unknown> {
   let resolved: Record<string, unknown> | undefined;
   for (const key of FLAT_DATE_FILTER_KEYS) {
@@ -80,6 +85,11 @@ function resolveFlatDateFilters(filters: Record<string, unknown>, now: Date): Re
   return resolved ?? filters;
 }
 
+/**
+ * Resolves relative date placeholders in the values of `filters.filters`
+ * entries, each by its own op. Returns `filters` itself when nothing changes,
+ * else a copy.
+ */
 function resolveCaseFieldDateFilters(filters: Record<string, unknown>, now: Date): Record<string, unknown> {
   const fieldFilters = filters.filters;
   if (!hasFieldFilterEntries(fieldFilters)) return filters;

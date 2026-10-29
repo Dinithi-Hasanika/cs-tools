@@ -203,6 +203,10 @@ func teamFilterField(f any) string {
 	return ""
 }
 
+// resolveFilter swaps the team keys or names in one creTeam / sreTeam filter
+// for the teams' group ids, in place, and reports whether anything changed.
+// Any other filter is left alone. The filter must use op "in" with at least
+// one team; the current-team placeholder passes through.
 func (t dashboardTeams) resolveFilter(f any, where string) (bool, error) {
 	field := teamFilterField(f)
 	if field == "" {
@@ -288,6 +292,8 @@ func WithDashboardTeams(inner DashboardGenerator, teams []directory.TeamResult) 
 	return &teamResolvingGenerator{inner: inner, teams: newDashboardTeams(teams)}
 }
 
+// Generate asks the wrapped generator for the dashboard, then resolves its
+// team filters (resolveDashboard); an unusable team filter is an error.
 func (g *teamResolvingGenerator) Generate(ctx context.Context, prompt string, current json.RawMessage) (GeneratedDashboard, error) {
 	result, err := g.inner.Generate(ctx, prompt, current)
 	if err != nil {

@@ -158,6 +158,9 @@ func (h *HealthHandler) GetHealthDependencies(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// computeHealthDependencies checks every listed dependency at the same time,
+// each under its own timeout. The status is "degraded" (503) when any is
+// down; one that is not configured does not count as down.
 func computeHealthDependencies(ctx context.Context, h *HealthHandler) (HealthDependenciesResponse, int) {
 	checks := []struct {
 		name   string

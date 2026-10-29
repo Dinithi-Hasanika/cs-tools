@@ -132,10 +132,12 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
   {
     // Route-backed tabs (the Customers shape): CsmDashboardsLayout draws them.
     // System Dashboards shares the section's own path, so it is the landing
-    // tab and owns every /dashboard/:dashboardId(/:teamId) page. My and
-    // Shared Dashboards (user-made dashboards) are for CS engineers and admins
-    // for now (canWrite is exactly that group); their static paths outrank
-    // /dashboard/:dashboardId in React Router.
+    // tab and owns every /dashboard/:dashboardId(/:teamId) page. My
+    // Dashboards (generating and saving) is for CS engineers and admins
+    // (canWrite is exactly that group); Shared Dashboards is for every portal
+    // role, like System, since anyone a dashboard is shared with must be able
+    // to open it. Their static paths outrank /dashboard/:dashboardId in React
+    // Router.
     id: "dashboard",
     label: "Dashboards",
     href: "/dashboard",
@@ -158,7 +160,6 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         id: "dashboard.shared",
         label: "Shared Dashboards",
         href: "/dashboard/shared",
-        requires: "canWrite",
         icon: UsersRound,
       },
     ],

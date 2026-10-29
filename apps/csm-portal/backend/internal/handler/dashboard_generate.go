@@ -23,9 +23,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
@@ -64,6 +67,7 @@ type generateDashboardRequest struct {
 // decline sentence (generateDeclinedError), which is about the request.
 const (
 	errMsgGenerateDraftInvalid = "The dashboard being edited could not be read. Start a new one."
+	errMsgGenerateDraftTooBig  = "The dashboard being edited is too large to change in the chat. Start a new one."
 	errMsgGenerateRefused      = "This request can't be turned into a dashboard. Try rephrasing it."
 	errMsgGenerateUnusable     = "The answer couldn't be turned into a dashboard. Try again, or rephrase the request."
 	errMsgGenerateTimeout      = "Generating the dashboard took too long. Try again."
@@ -75,6 +79,7 @@ const (
 //
 //   - ErrGenerateUnavailable                         503
 //   - errDraftInvalid (the request's "current")      400
+//   - errDraftTooLarge (over generateDraftMaxBytes)  413
 //   - generateDeclinedError (the model's {"error"})  422, the model's sentence
 //   - errDashboardTeam (a team filter that cannot   422, the reason (an unknown
 //     work: see dashboardTeams)                         team, the wrong field, ...)
@@ -94,6 +99,9 @@ func writeGenerateError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, errDraftInvalid):
 		slog.InfoContext(ctx, "dashboard generate: invalid draft", "err", err)
 		writeError(w, http.StatusBadRequest, errMsgGenerateDraftInvalid)
+	case errors.Is(err, errDraftTooLarge):
+		slog.InfoContext(ctx, "dashboard generate: draft too large", "err", err)
+		writeError(w, http.StatusRequestEntityTooLarge, errMsgGenerateDraftTooBig)
 	case errors.As(err, &declined):
 		slog.InfoContext(ctx, "dashboard generate: model declined")
 		writeError(w, http.StatusUnprocessableEntity, declined.Reason)
@@ -164,14 +172,41 @@ type generateDashboardResponse struct {
 // converts the result with the same widgetViews GET /dashboards/{dashboardId}
 // uses, so the preview matches the dashboard everywhere else. Which generator
 // answers (the sample today) is decided in main.go. The dashboard's id is set
-// here (generatedDashboardID), not by the generator. Nothing is stored.
+// here (generatedDashboardID), not by the generator. Nothing is stored. With a
+// GenerateRateLimiter (WithRateLimit), a user over its limits gets a 429
+// before the generator is asked.
 type DashboardGenerateHandler struct {
 	generator DashboardGenerator
+	limiter   *GenerateRateLimiter
 }
 
 // NewDashboardGenerateHandler returns the handler using generator.
 func NewDashboardGenerateHandler(generator DashboardGenerator) *DashboardGenerateHandler {
 	return &DashboardGenerateHandler{generator: generator}
+}
+
+// WithRateLimit returns the handler with limiter applied to every valid
+// request, before the generator is asked.
+func (h *DashboardGenerateHandler) WithRateLimit(limiter *GenerateRateLimiter) *DashboardGenerateHandler {
+	c := *h
+	c.limiter = limiter
+	return &c
+}
+
+// writeGenerateRateLimited is the 429 for a user over a GenerateRateLimiter
+// limit, with Retry-After in whole seconds.
+func writeGenerateRateLimited(w http.ResponseWriter, r *http.Request, retryAfter time.Duration, daily bool) {
+	secs := int(math.Ceil(retryAfter.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	slog.InfoContext(r.Context(), "dashboard generate: rate limited", "daily", daily, "retryAfterSeconds", secs)
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	msg := fmt.Sprintf("You've sent a lot of messages in a short time. Try again in %d seconds.", secs)
+	if daily {
+		msg = "You've reached the limit of dashboard generations for the last 24 hours. Try again later."
+	}
+	writeError(w, http.StatusTooManyRequests, msg)
 }
 
 // GenerateDashboard handles POST /dashboards/generate.
@@ -195,6 +230,16 @@ func (h *DashboardGenerateHandler) GenerateDashboard(w http.ResponseWriter, r *h
 	if utf8.RuneCountInString(prompt) > generatePromptMaxLength {
 		writeError(w, http.StatusBadRequest, errMsgGeneratePromptTooLong)
 		return
+	}
+	if h.limiter != nil {
+		key := user.UserID
+		if key == "" {
+			key = strings.ToLower(user.Email)
+		}
+		if ok, retryAfter, daily := h.limiter.Allow(key); !ok {
+			writeGenerateRateLimited(w, r, retryAfter, daily)
+			return
+		}
 	}
 
 	result, err := h.generator.Generate(r.Context(), prompt, req.Current)

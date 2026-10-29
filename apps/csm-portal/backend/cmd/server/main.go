@@ -113,6 +113,12 @@ func main() {
 		slog.Error("invalid AI integration service configuration", "err", err)
 		os.Exit(1)
 	}
+	// Per-user limits on POST /dashboards/generate: each call is a model call.
+	generateLimits, err := loadGenerateRateLimits(os.Getenv)
+	if err != nil {
+		slog.Error("invalid dashboard generate limit configuration", "err", err)
+		os.Exit(1)
+	}
 	if aiCfg.Enabled() && aiCfg.Timeout >= reqTimeouts.RESTWrite {
 		slog.Warn("CSM_AI_INTEGRATION_SERVICE_TIMEOUT should be shorter than REST_WRITE_TIMEOUT",
 			"aiTimeout", aiCfg.Timeout, "writeTimeout", reqTimeouts.RESTWrite)
@@ -411,7 +417,8 @@ func main() {
 	// A team named in a generated dashboard's creTeam / sreTeam filter (its
 	// registry key) becomes the team's group id, once, here.
 	dashboardGenerator = handler.WithDashboardTeams(dashboardGenerator, dir.TeamResults())
-	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator)
+	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator).
+		WithRateLimit(handler.NewGenerateRateLimiter(generateLimits.PerMinute, generateLimits.PerDay))
 	customDashboardHandler := handler.NewCustomDashboardHandler(customerEntityClient).WithTeams(dir.TeamResults())
 	caseHandler = caseHandler.WithAccessGuard(accessGuard)
 	projectHandler = projectHandler.WithAccessGuard(accessGuard)
@@ -542,8 +549,11 @@ func main() {
 	route("DELETE /dashboards/custom/{id}/team-shares/{teamKey}", handler.PermWrite, customDashboardHandler.RemoveCustomDashboardTeamShare)
 	// Dashboards other users shared with the caller, view only. "shared" is a
 	// literal segment, like "custom", so it never collides with {dashboardId}.
-	route("GET /dashboards/shared", handler.PermWrite, customDashboardHandler.ListSharedDashboards)
-	route("GET /dashboards/shared/{id}", handler.PermWrite, customDashboardHandler.GetSharedDashboard)
+	// PermView, like the system dashboards: anyone a dashboard can be shared
+	// with (any internal user, any member of a team) can open it, and its
+	// widgets query with the viewer's own permissions.
+	route("GET /dashboards/shared", handler.PermView, customDashboardHandler.ListSharedDashboards)
+	route("GET /dashboards/shared/{id}", handler.PermView, customDashboardHandler.GetSharedDashboard)
 	route("GET /updates/product-update-levels", handler.PermTimeCardsAndUpdates, updatesHandler.GetProductUpdateLevels)
 	route("POST /updates/levels/search", handler.PermTimeCardsAndUpdates, updatesHandler.SearchUpdatesBetweenUpdateLevels)
 	route("GET /users/me", handler.PermAuthenticated, usersHandler.GetMe)

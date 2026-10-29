@@ -4605,7 +4605,12 @@ paths:
         says which); 502 when its answer is not
         a usable dashboard or the model cannot be reached; 504 when it takes
         too long; 503 when generation is unavailable (no sample loaded, or the
-        catalogue cannot be read).
+        catalogue cannot be read). 413 when the dashboard being edited is over
+        64 KiB as a definition (the size a saved one may be), checked before
+        any model call. 429, with Retry-After in seconds, when the caller has
+        started more than DASHBOARD_GENERATE_LIMIT_PER_MINUTE (default 10)
+        generations in the last minute or DASHBOARD_GENERATE_LIMIT_PER_DAY
+        (default 100) in the last 24 hours; a refused prompt does not count.
       operationId: generateDashboard
       requestBody:
         required: true
@@ -4652,6 +4657,17 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "422":
           description: UnprocessableEntity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "429":
+          description: Over the caller's generate limit (per minute or per 24 hours).
+          headers:
+            Retry-After:
+              description: Seconds until the caller may generate again.
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -5296,7 +5312,8 @@ paths:
         View only. Each entry names its owner (who shared it); ordered by name,
         without definitions (for the Shared Dashboards switcher). An empty list
         is `{"dashboards": []}`. The caller's own dashboards are not listed.
-        CS engineers and admins only.
+        Every portal role that can view dashboards (a dashboard can be shared
+        with any internal user or team).
       operationId: listSharedDashboards
       responses:
         "200":
@@ -5350,7 +5367,9 @@ paths:
         definition is checked again; 422 when it no longer passes because the
         dashboard rules changed since it was saved (the message asks the
         recipient to have the owner update it). 404 when it is not shared with
-        the caller, including the caller's own. CS engineers and admins only.
+        the caller, including the caller's own. Every portal role that can view
+        dashboards; each widget's data is read with the caller's own
+        permissions.
       operationId: getSharedDashboard
       parameters:
         - name: id

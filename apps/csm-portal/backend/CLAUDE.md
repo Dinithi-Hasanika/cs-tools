@@ -800,6 +800,36 @@ Verified end to end against real staging data for one account exercising the fir
 
 **Superseded (deleted):** **Combining more than one client-side filter (region/risks/product/abtTeam) was slow — each of up to 10,000 scanned accounts computed its risk flags via a dozen+ sequential entity-service calls, one account at a time.** `filteredAccounts`' per-page account loop now delegates to `scanAccountsPage`, which evaluates the accounts of one page concurrently (`golang.org/x/sync/errgroup`, bounded to `customerHealthScanConcurrency` = 8 accounts at once) instead of sequentially. Each account's own calls still happen in the same internal order as before (intra-account parallelization was tried and reverted — it broke a test fixture that depends on `SearchCases` call order, and a real `-race` data race once two accounts' calls landed on the same connection concurrently); only the cross-account fan-out is new. Order is preserved exactly: each goroutine writes its verdict into an index-addressed slice, and the matched set is reassembled by walking that slice in the original page order afterward, so pagination stays stable across repeated identical requests (`TestPostgresCustomerHealthClient_RisksFilter_PreservesAccountOrder`). The whole scan, including `scanAccountsPage` and `customerHealthScanConcurrency`, is gone: region/risks/product/abtTeam are server-side filters of the single `POST /accounts/search` call, so there is nothing left to parallelize.
 
+## Custom dashboards (`/dashboards/generate`, `/dashboards/custom/*`, `/dashboards/shared/*`)
+
+A saved dashboard is the definition the user saved, stored by entity-service as opaque text
+(`custom_dashboard.definition`). Every read checks it again with `dashboard.ParseGenerated`, the check
+it passed when it was saved (`GetCustomDashboard`, `GetSharedDashboard` in
+`internal/handler/custom_dashboards.go`).
+
+**Known limitation: saved definitions are not migrated.** When a widget type, field or rule changes so
+that a saved definition no longer passes, the owner's and every recipient's view answer 422 (the
+message asks the owner to generate it again), and the only repair is regenerating it. Drawing it
+anyway could run queries the current rules refuse. A change that would break saved dashboards needs
+its own plan: keep accepting the old form, or migrate the stored rows.
+
+**Who can reach what** (pinned by `cmd/server/custom_dashboard_routes_test.go`): generating, saving,
+deleting and sharing (`/dashboards/generate`, `/dashboards/custom/*`) are `PermWrite`, CS engineers and
+admins. Reading what was shared with you (`/dashboards/shared*`) is `PermView`, like the system
+dashboards, because the share picker offers every internal user and a team share reaches every member:
+with `PermWrite` a view-only recipient would be handed a dashboard that answers 403. Opening one grants
+no data: each widget calls its own search route with the viewer's permissions (time cards, incidents
+and change requests keep theirs), so a widget outside the viewer's role fails on its own.
+
+**What one user can spend on model calls.** Every `POST /dashboards/generate` that passes the prompt
+checks counts against the caller's `handler.GenerateRateLimiter` (keyed by the token's user id):
+`DASHBOARD_GENERATE_LIMIT_PER_MINUTE` (default 10) in any minute and `DASHBOARD_GENERATE_LIMIT_PER_DAY`
+(default 100) in any 24 hours, else 429 with `Retry-After` before the generator is asked. The counts are
+in memory, so per backend instance and reset on restart: a cost guard, not an exact quota. The draft is
+capped too: over `generateDraftMaxBytes` (64 KiB, the size entity-service allows a saved definition) as a
+definition is a 413 before any call, and csm-ai-integration-service refuses the same with a 400, so one
+call sends the model at most the catalogue, a 2,000-character prompt and a 64 KiB draft.
+
 ## Running locally
 
 ```bash

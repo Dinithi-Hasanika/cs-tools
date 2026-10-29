@@ -65,6 +65,8 @@ func (s *customDashboardShareService) ownedDashboard(ctx context.Context, dashbo
 	return ownerID, nil
 }
 
+// ListShares is the people the caller's dashboard is shared with; a
+// NotFoundError when it is not the caller's.
 func (s *customDashboardShareService) ListShares(ctx context.Context, dashboardID string) (domain.CustomDashboardShareList, error) {
 	ownerID, err := s.ownedDashboard(ctx, dashboardID)
 	if err != nil {
@@ -73,6 +75,7 @@ func (s *customDashboardShareService) ListShares(ctx context.Context, dashboardI
 	return s.shareList(ctx, ownerID, dashboardID)
 }
 
+// shareList is the dashboard's person shares, never nil.
 func (s *customDashboardShareService) shareList(ctx context.Context, ownerID, dashboardID string) (domain.CustomDashboardShareList, error) {
 	shares, err := s.shares.ListShares(ctx, ownerID, dashboardID)
 	if err != nil {
@@ -121,6 +124,9 @@ func (s *customDashboardShareService) AddShare(ctx context.Context, dashboardID,
 	return s.shareList(ctx, ownerID, dashboardID)
 }
 
+// RemoveShare stops sharing the caller's dashboard with userID; a
+// NotFoundError when the dashboard is not the caller's or was not shared
+// with that user.
 func (s *customDashboardShareService) RemoveShare(ctx context.Context, dashboardID, userID string) error {
 	if err := validateShareUserID(userID); err != nil {
 		return err
@@ -139,6 +145,8 @@ func (s *customDashboardShareService) RemoveShare(ctx context.Context, dashboard
 	return nil
 }
 
+// ListSharedWithMe is the dashboards shared with the caller, by person or
+// team share; never nil.
 func (s *customDashboardShareService) ListSharedWithMe(ctx context.Context) (domain.SharedCustomDashboardList, error) {
 	userID, err := dashboardCallerID(ctx, s.userRepo)
 	if err != nil {
@@ -154,6 +162,8 @@ func (s *customDashboardShareService) ListSharedWithMe(ctx context.Context) (dom
 	return domain.SharedCustomDashboardList{Dashboards: list}, nil
 }
 
+// GetSharedWithMe is one dashboard shared with the caller, with its
+// definition; a NotFoundError when it is not shared with them.
 func (s *customDashboardShareService) GetSharedWithMe(ctx context.Context, dashboardID string) (domain.SharedCustomDashboard, error) {
 	if err := validateCustomDashboardID(dashboardID); err != nil {
 		return domain.SharedCustomDashboard{}, err

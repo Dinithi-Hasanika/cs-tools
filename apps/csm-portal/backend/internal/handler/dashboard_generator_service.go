@@ -33,10 +33,9 @@ import (
 // integrations/csm-ai-integration-service.
 type aiDashboardClient interface {
 	GenerateDashboard(ctx context.Context, req csmai.DashboardRequest) (csmai.DashboardResult, error)
-	GenerateCode(ctx context.Context, req csmai.CodeRequest) (csmai.CodeResult, error)
 }
 
-// serviceDashboardGenerator is the JSON generator when the model call is the
+// serviceDashboardGenerator is the generator when the model call is the
 // AI integration service's. The service builds the prompt (the catalogue,
 // the Teams section from the team list sent here, the prompt and the draft)
 // and returns every JSON object of the reply; judging them stays here: the
@@ -50,7 +49,7 @@ type serviceDashboardGenerator struct {
 	teams  []csmai.Team
 }
 
-// NewServiceDashboardGenerator returns the JSON generator calling the AI
+// NewServiceDashboardGenerator returns the generator calling the AI
 // integration service. teams is the registry (directory.TeamResults); only
 // the teams with a group configured are sent, the ones a dashboard can
 // filter by (see dashboardTeams).
@@ -106,37 +105,6 @@ func (g *serviceDashboardGenerator) Generate(ctx context.Context, prompt string,
 		return GeneratedDashboard{Dashboard: d, Reply: generatedReply(d)}, nil
 	}
 	return GeneratedDashboard{}, fmt.Errorf("%w: %w", errGenerateUnusable, lastErr)
-}
-
-// serviceCodeDashboardGenerator is the code approach's generator when the
-// model call is the AI integration service's. The service also reads the
-// reply (the code block, the render function, the CANNOT: line), so this
-// only maps the answer and its errors.
-type serviceCodeDashboardGenerator struct {
-	client aiDashboardClient
-}
-
-// NewServiceCodeDashboardGenerator returns the code generator calling the AI
-// integration service.
-func NewServiceCodeDashboardGenerator(client aiDashboardClient) CodeDashboardGenerator {
-	return &serviceCodeDashboardGenerator{client: client}
-}
-
-// Generate makes one service call for one chat message.
-func (g *serviceCodeDashboardGenerator) Generate(ctx context.Context, prompt, current string) (GeneratedCodeDashboard, error) {
-	res, err := g.client.GenerateCode(ctx, csmai.CodeRequest{Prompt: prompt, Current: current})
-	if err != nil {
-		return GeneratedCodeDashboard{}, serviceGenerateError(err)
-	}
-	slog.InfoContext(ctx, "dashboard generate-code: model replied",
-		"inputTokens", res.Usage.InputTokens, "outputTokens", res.Usage.OutputTokens)
-	if res.Declined != "" {
-		return GeneratedCodeDashboard{}, &generateDeclinedError{Reason: res.Declined}
-	}
-	if res.Source == "" {
-		return GeneratedCodeDashboard{}, fmt.Errorf("%w: no source in the answer", errGenerateUnusable)
-	}
-	return GeneratedCodeDashboard{Source: res.Source, Reply: res.Reply}, nil
 }
 
 // serviceGenerateError turns a csmai error into the generator errors

@@ -70,7 +70,6 @@ import MyDashboardsPage from "@features/csm-custom-dashboards/pages/MyDashboards
 import SharedDashboardsPage from "@features/csm-custom-dashboards/pages/SharedDashboardsPage";
 import GenerateDashboardPage from "@features/csm-custom-dashboards/pages/GenerateDashboardPage";
 import EditCustomDashboardPage from "@features/csm-custom-dashboards/pages/EditCustomDashboardPage";
-import GenerateCodeDashboardRoute from "@features/csm-custom-dashboards/pages/GenerateCodeDashboardRoute";
 import CsMonitorDashboardPage from "@features/csm-dashboard/pages/CsMonitorDashboardPage";
 import DashboardWidgetPreviewPage from "@features/csm-dashboard/pages/DashboardWidgetPreviewPage";
 import CsmCasesPage from "@features/csm-cases/pages/CsmCasesPage";
@@ -493,9 +492,6 @@ export default function App(): JSX.Element {
                       outranks "my/:dashboardId". */}
                   <Route path="dashboard/my/new" element={<GenerateDashboardPage />} />
                   <Route path="dashboard/my/:dashboardId/edit" element={<EditCustomDashboardPage />} />
-                  {/* The code approach (phase 2): the 404 page unless
-                      DASHBOARD_GENERATE_CODE_ENABLED is on. */}
-                  <Route path="dashboard/my/new-code" element={<GenerateCodeDashboardRoute />} />
                   {/* Dashboard widget "View more" preview — :previewSlug is
                       one of WIDGET_RESOURCE_CONFIG's own previewSlug values
                       (e.g. "cases"), resolved back to a resourceType by

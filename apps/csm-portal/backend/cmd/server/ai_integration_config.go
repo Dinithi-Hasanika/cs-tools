@@ -32,7 +32,7 @@ const defaultAIIntegrationTimeout = 55 * time.Second
 
 // aiIntegrationConfig configures the client for
 // integrations/csm-ai-integration-service, which makes the dashboard
-// generators' model calls. An empty BaseURL means the service is not used.
+// generator's model calls. An empty BaseURL means the service is not used.
 type aiIntegrationConfig struct {
 	BaseURL string
 	Scopes  []string

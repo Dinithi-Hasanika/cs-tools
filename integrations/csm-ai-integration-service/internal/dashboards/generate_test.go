@@ -36,10 +36,9 @@ const validGenerated = `{"displayName":"Top Customers by Open Cases","widgets":[
 
 type fixedCatalogue struct {
 	text string
-	err  error
 }
 
-func (c fixedCatalogue) Text() (string, error) { return c.text, c.err }
+func (c fixedCatalogue) Text() string { return c.text }
 
 // fakeGateway answers every Messages call with one text block and the given
 // stop reason (or with status/body when status is set), and records the last
@@ -214,15 +213,6 @@ func TestGenerateErrors(t *testing.T) {
 				t.Errorf("timeout err = %v, want a deadline", err)
 			}
 		})
-	}
-}
-
-func TestGenerateMakesNoCallWithoutACatalogue(t *testing.T) {
-	gw := &fakeGateway{text: validGenerated}
-	_, err := newTestGenerator(t, gw, fixedCatalogue{err: errors.New("gone")}, 5*time.Second).
-		Generate(context.Background(), Request{Prompt: "p"})
-	if !errors.Is(err, ErrCatalogue) || gw.calls.Load() != 0 {
-		t.Errorf("err = %v, calls = %d, want ErrCatalogue and no call", err, gw.calls.Load())
 	}
 }
 

@@ -19,18 +19,30 @@ import { type JSX, useEffect, useRef, useState } from "react";
 import { useCodeDashboardPortal } from "@features/csm-custom-dashboards/api/useCodeDashboardPortal";
 
 /**
+ * The Content-Security-Policy of the iframe's document. It blocks every
+ * outbound request the generated code could make with the viewer's data
+ * (fetch, XHR, WebSocket, images, fonts, styles, frames, forms): the code
+ * catalogue allows plain DOM and inline SVG only, so a real dashboard needs
+ * none of them. It cannot stop the frame navigating itself to another
+ * address; that needs a separate sandbox origin, still to do before this goes
+ * beyond the POC (phase 2).
+ */
+const FRAME_CSP =
+  "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
+
+/**
  * The document loaded into the iframe: an empty `#root`, a `portal` whose every
  * call is a postMessage to this page, and a runner that turns the received
  * source into its `render` function and calls it.
  *
  * EXPERIMENTAL (POC) EXCEPTION to the webapp CLAUDE.md's "no eval, new
- * Function, or dynamic <script>" rule, agreed for the proof of concept only:
- * the runner is an inline script and uses `new Function`. It runs only inside
- * the sandboxed iframe below (opaque origin: no access to this page, its
- * cookies, storage or tokens). No CSP is applied yet. Must be revisited (a
- * separate sandbox origin, a CSP) before this goes beyond the POC.
+ * Function, or dynamic <script>" rule, agreed for the proof of concept only
+ * (recorded there): the runner is an inline script and uses `new Function`. It
+ * runs only inside the sandboxed iframe below (opaque origin: no access to this
+ * page, its cookies, storage or tokens).
  */
 const RUNNER = `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">
 <style>body{font:14px/1.45 system-ui,sans-serif;margin:12px;color:#1d2330;background:#fff}</style></head>
 <body><div id="root"></div><script>
 let next = 0; const pending = new Map();

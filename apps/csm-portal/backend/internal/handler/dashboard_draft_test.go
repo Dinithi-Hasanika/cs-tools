@@ -106,6 +106,33 @@ func TestDraftToDefinition_RoundTrip(t *testing.T) {
 	}
 }
 
+// A distinct-count widget keeps its distinctBy through the draft: without it,
+// a follow-up edit would turn "distinct accounts" into a plain record count.
+func TestDraftToDefinition_KeepsDistinctBy(t *testing.T) {
+	const authored = `{"id": "ai-distinct", "displayName": "Distinct", "type": "cs", "isDefault": false, "targetTeam": "",
+  "isTeamBased": false, "widgets": [{"id": "accounts", "displayName": "Accounts with open cases", "resourceType": "case",
+  "shape": "count", "gridWidth": 3, "query": {"filters": [{"field": "state", "op": "in", "values": ["open"]}]},
+  "distinctBy": {"field": "account", "maxGroups": 1000}}]}`
+	loaded, served := servedDraft(t, authored)
+	if !strings.Contains(string(served), `"distinctBy"`) {
+		t.Fatalf("served form lacks distinctBy, so the test proves nothing: %s", served)
+	}
+	def, err := draftToDefinition(served)
+	if err != nil {
+		t.Fatalf("draftToDefinition: %v", err)
+	}
+	if got, want := asJSONValue(t, def), asJSONValue(t, []byte(authored)); !reflect.DeepEqual(got, want) {
+		t.Errorf("definition lost or changed distinctBy\n got: %s\nwant: %s", def, authored)
+	}
+	reloaded, err := dashboard.ParseDashboardsConfig("[" + string(def) + "]")
+	if err != nil {
+		t.Fatalf("load the definition: %v", err)
+	}
+	if !reflect.DeepEqual(reloaded[0], loaded) {
+		t.Errorf("reloaded dashboard differs from the one served\n got: %+v\nwant: %+v", reloaded[0], loaded)
+	}
+}
+
 func TestDraftToDefinition_NoDraft(t *testing.T) {
 	for _, current := range []string{"", "  ", "null", " null "} {
 		def, err := draftToDefinition(json.RawMessage(current))

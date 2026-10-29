@@ -129,6 +129,22 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		)
 	}
 
+	var customDashboardHandler *handler.CustomDashboardHandler
+	var customDashboardShareHandler *handler.CustomDashboardShareHandler
+	var customDashboardTeamShareHandler *handler.CustomDashboardTeamShareHandler
+	if db != nil {
+		customDashboardRepo := repository.NewCustomDashboardRepository(db)
+		customDashboardHandler = handler.NewCustomDashboardHandler(
+			service.NewCustomDashboardService(customDashboardRepo, userRepo),
+		)
+		customDashboardShareHandler = handler.NewCustomDashboardShareHandler(
+			service.NewCustomDashboardShareService(repository.NewCustomDashboardShareRepository(db), customDashboardRepo, userRepo),
+		)
+		customDashboardTeamShareHandler = handler.NewCustomDashboardTeamShareHandler(
+			service.NewCustomDashboardTeamShareService(repository.NewCustomDashboardTeamShareRepository(db), customDashboardRepo, userRepo),
+		)
+	}
+
 	// event_publish_failures, sla_clocks, scheduled_task_run, and
 	// alert_incident_mapping have no ServiceNow equivalent. They are
 	// Postgres-backed and registered only when a pool is available
@@ -2250,6 +2266,29 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		mux.HandleFunc("PATCH /users/me/saved-filter-views", savedFilterViewHandler.Save)
 		mux.HandleFunc("DELETE /users/me/saved-filter-views", savedFilterViewHandler.Delete)
 		mux.HandleFunc("POST /users/me/saved-filter-views/reorder", savedFilterViewHandler.Reorder)
+	}
+	if customDashboardHandler != nil {
+		// The caller's own saved dashboards (CSM portal My Dashboards).
+		mux.HandleFunc("GET /users/me/dashboards", customDashboardHandler.List)
+		mux.HandleFunc("GET /users/me/dashboards/{id}", customDashboardHandler.Get)
+		mux.HandleFunc("PUT /users/me/dashboards/{id}", customDashboardHandler.Save)
+		mux.HandleFunc("DELETE /users/me/dashboards/{id}", customDashboardHandler.Delete)
+	}
+	if customDashboardShareHandler != nil {
+		// Sharing the caller's saved dashboards (owner) and the ones shared
+		// with the caller (recipient, view only).
+		mux.HandleFunc("GET /users/me/dashboards/{id}/shares", customDashboardShareHandler.ListShares)
+		mux.HandleFunc("PUT /users/me/dashboards/{id}/shares/{userId}", customDashboardShareHandler.AddShare)
+		mux.HandleFunc("DELETE /users/me/dashboards/{id}/shares/{userId}", customDashboardShareHandler.RemoveShare)
+		mux.HandleFunc("GET /users/me/shared-dashboards", customDashboardShareHandler.ListSharedWithMe)
+		mux.HandleFunc("GET /users/me/shared-dashboards/{id}", customDashboardShareHandler.GetSharedWithMe)
+	}
+	if customDashboardTeamShareHandler != nil {
+		// Sharing the caller's saved dashboards with teams (owner); the
+		// members read them through the shared-dashboards routes above.
+		mux.HandleFunc("GET /users/me/dashboards/{id}/team-shares", customDashboardTeamShareHandler.ListTeamShares)
+		mux.HandleFunc("PUT /users/me/dashboards/{id}/team-shares/{teamId}", customDashboardTeamShareHandler.AddTeamShare)
+		mux.HandleFunc("DELETE /users/me/dashboards/{id}/team-shares/{teamId}", customDashboardTeamShareHandler.RemoveTeamShare)
 	}
 
 	if membershipRegistrationHandler != nil {

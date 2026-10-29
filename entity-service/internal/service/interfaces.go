@@ -130,6 +130,42 @@ type SavedFilterViewService interface {
 	Reorder(ctx context.Context, req domain.ReorderSavedFilterViewRequest) (domain.SavedFilterViewList, error)
 }
 
+// CustomDashboardService is the caller's own saved custom dashboards (CSM
+// portal My Dashboards). Postgres-only; the owner is always the authenticated
+// user resolved from x-user-id-token, never a client-supplied user id, and
+// another user's dashboard is reported as not found.
+type CustomDashboardService interface {
+	List(ctx context.Context) (domain.CustomDashboardList, error)
+	Get(ctx context.Context, id string) (domain.CustomDashboard, error)
+	Save(ctx context.Context, id string, req domain.SaveCustomDashboardRequest) (domain.CustomDashboard, error)
+	Delete(ctx context.Context, id string) error
+}
+
+// CustomDashboardShareService shares the caller's saved dashboards with other
+// users, view only (CSM portal Shared Dashboards). Postgres-only. The caller is
+// always resolved from x-user-id-token. Only a dashboard's owner lists or
+// changes its shares; a recipient sees only the dashboards shared with them,
+// never who else has them.
+type CustomDashboardShareService interface {
+	ListShares(ctx context.Context, dashboardID string) (domain.CustomDashboardShareList, error)
+	AddShare(ctx context.Context, dashboardID, userID string) (domain.CustomDashboardShareList, error)
+	RemoveShare(ctx context.Context, dashboardID, userID string) error
+	ListSharedWithMe(ctx context.Context) (domain.SharedCustomDashboardList, error)
+	GetSharedWithMe(ctx context.Context, dashboardID string) (domain.SharedCustomDashboard, error)
+}
+
+// CustomDashboardTeamShareService shares the caller's saved dashboards with
+// teams (team table), view only. Postgres-only; the caller is resolved from
+// x-user-id-token, and only a dashboard's owner lists or changes its team
+// shares. The team's members see the dashboard through
+// CustomDashboardShareService's ListSharedWithMe / GetSharedWithMe.
+type CustomDashboardTeamShareService interface {
+	ListTeamShares(ctx context.Context, dashboardID string) (domain.CustomDashboardTeamShareList, error)
+	AddTeamShare(ctx context.Context, dashboardID, teamID string) (domain.CustomDashboardTeamShareList, error)
+	RemoveTeamShare(ctx context.Context, dashboardID, teamID string) error
+}
+
+// RunbookService manages the alert-name to runbook catalog (Operations > Runbooks).
 // PortalBannerService is the HTML banners both portals show. Customer and CSM
 // reads each return only published rows for that portal. Writes require a
 // CSM admin (AUTH_ADMIN_ROLES).

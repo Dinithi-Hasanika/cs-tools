@@ -4593,10 +4593,11 @@ paths:
         GET /dashboards/{dashboardId}. Nothing is stored. CS engineers and
         admins only. 400 when the prompt is missing, blank or over 2000
         characters, checked before any other work, or when the dashboard being
-        edited cannot be read. With a model key configured the dashboard comes
-        from the model (the dashboard id is always given by the backend: the
-        draft's id when it is a UUID, else a new one); without one, a sample
-        dashboard is returned for every valid request. A team named in a
+        edited cannot be read. With the AI integration service configured
+        (CSM_AI_INTEGRATION_SERVICE_BASE_URL) the dashboard comes from the
+        model through that service (the dashboard id is always given by the
+        backend: the draft's id when it is a UUID, else a new one); without
+        it, a sample dashboard is returned for every valid request. A team named in a
         creTeam / sreTeam filter (its team registry key) is turned into that
         team's group id before the reply. 422 when the model declines (the
         message says why), refuses, or names a team that cannot be filtered

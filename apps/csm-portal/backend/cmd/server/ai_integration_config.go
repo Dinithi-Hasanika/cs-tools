@@ -64,6 +64,8 @@ func loadAIIntegrationConfig(getenv func(string) string) (aiIntegrationConfig, e
 	return aiIntegrationConfig{BaseURL: base, Scopes: splitComma(getenv("CSM_AI_INTEGRATION_SERVICE_SCOPES")), Timeout: timeout}, nil
 }
 
+// validateAIIntegrationBaseURL accepts an https base URL (the same rules as
+// every other upstream), or an http one only for a local host (isLocalHost).
 func validateAIIntegrationBaseURL(value string) error {
 	u, err := url.Parse(value)
 	if err != nil {

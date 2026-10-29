@@ -102,6 +102,7 @@ type Error struct {
 	Code       string
 }
 
+// Error names the status and, when the service sent one, its error code.
 func (e *Error) Error() string {
 	if e.Code == "" {
 		return fmt.Sprintf("csmai: status %d", e.StatusCode)

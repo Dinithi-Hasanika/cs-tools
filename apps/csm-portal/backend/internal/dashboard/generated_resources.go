@@ -342,6 +342,10 @@ func checkGeneratedFieldFilters(at string, v any, rules resourceRules) error {
 	return nil
 }
 
+// checkGeneratedValues checks one filter's values against its rule: values
+// from a fixed list, exactly one of a list, the current user only, one date
+// (or relative date), or one boolean. The error names where (at) and what is
+// allowed.
 func checkGeneratedValues(at string, values []string, rule valueRule, noun, key string) error {
 	switch rule.kind {
 	case valuesEnum:
@@ -379,6 +383,8 @@ var valueNames = map[string]string{
 	"onboardingStatus": "onboarding status", "excludeClosureStates": "closure state",
 }
 
+// singular is the readable name of one value of key (valueNames), for error
+// messages; key itself when it has none.
 func singular(key string) string {
 	if name, ok := valueNames[key]; ok {
 		return name
@@ -386,6 +392,8 @@ func singular(key string) string {
 	return key
 }
 
+// allowedKeys is the query keys a resource type accepts, sorted, with
+// "filters" when it takes field filters.
 func allowedKeys(rules resourceRules) []string {
 	keys := make([]string, 0, len(rules.flat)+1)
 	for k := range rules.flat {
@@ -398,6 +406,8 @@ func allowedKeys(rules resourceRules) []string {
 	return keys
 }
 
+// generatedDate reports whether s is a date a generated filter may hold: a
+// relative date placeholder, YYYY-MM-DD, or an RFC 3339 time.
 func generatedDate(s string) bool {
 	if generatedRelativeDate.MatchString(s) {
 		return true
@@ -426,6 +436,7 @@ func stringList(v any) ([]string, bool) {
 	return out, true
 }
 
+// contains reports whether list holds s.
 func contains(list []string, s string) bool {
 	for _, x := range list {
 		if x == s {
@@ -435,6 +446,7 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// containsShape reports whether list holds s.
 func containsShape(list []Shape, s Shape) bool {
 	for _, x := range list {
 		if x == s {
@@ -444,6 +456,7 @@ func containsShape(list []Shape, s Shape) bool {
 	return false
 }
 
+// shapeNames is shapes as strings, for error messages.
 func shapeNames(shapes []Shape) []string {
 	out := make([]string, len(shapes))
 	for i, s := range shapes {

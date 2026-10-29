@@ -185,6 +185,7 @@ func customDashboardSharePath(id, userID string) string {
 	return customDashboardPath(id) + "/shares/" + url.PathEscape(userID)
 }
 
+// decodeShareList reads entity-service's share list response; never nil.
 func decodeShareList(raw []byte) ([]CustomDashboardShare, error) {
 	var resp customDashboardShareListResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
@@ -259,6 +260,7 @@ func customDashboardTeamSharePath(id, teamID string) string {
 	return customDashboardPath(id) + "/team-shares/" + url.PathEscape(teamID)
 }
 
+// decodeTeamShareList reads entity-service's team share list response; never nil.
 func decodeTeamShareList(raw []byte) ([]CustomDashboardTeamShare, error) {
 	var resp customDashboardTeamShareListResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {

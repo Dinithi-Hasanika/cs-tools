@@ -583,7 +583,10 @@ set) and only once a rung has gone out with sending on, so a room never hears
 about a chain it did not see; before any rung, a room the incident card
 reached (`IncidentCards`, e.g. an SME ladder whose L1 was empty) counts as
 having seen it. A hand-off to the SMEs posts nothing here; its
-own message says it. The SRE setting covers the SME ladders. Best effort.
+own message says it. An SRE incident that is answered (acknowledged, assigned
+or commented on) posts no stopped reply in any room, under its incident card
+included; only an assignment ends the ladder's own thread with "Incident
+Acknowledged.". A priority change restarting its chain still replies. The SRE setting covers the SME ladders. Best effort.
 
 **Stops on** (an SRE incident): `incident.assigned` (an engineer set as the
 assignee, published by entity-service) or `incident.acknowledged` (leaving NEW,

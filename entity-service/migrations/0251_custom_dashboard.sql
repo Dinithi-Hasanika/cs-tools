@@ -18,10 +18,12 @@
 -- Dashboards). definition is the dashboard JSON in the portal's file format,
 -- stored as opaque text like user_saved_filter.qs: the CSM backend validates
 -- it before saving and again after reading, and this service does not parse
--- it. id is the draft's own id, so saving the same draft again replaces the
--- row. name is the definition's displayName, kept as a column so a list needs
--- no JSON. No ServiceNow equivalent; Postgres-only. owner_user_id is
--- "user".id (JWT email -> GetUserByEmail); rows go when the user is deleted.
+-- it (so nothing migrates a saved definition when that format changes; see
+-- the CSM backend's CLAUDE.md, "Custom dashboards"). id is the draft's own
+-- id, so saving the same draft again replaces the row. name is the
+-- definition's displayName, kept as a column so a list needs no JSON.
+-- Postgres-only: no other data source holds it. owner_user_id is "user".id
+-- (JWT email -> GetUserByEmail); rows go when the user is deleted.
 CREATE TABLE IF NOT EXISTS custom_dashboard (
     id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_user_id UUID         NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,

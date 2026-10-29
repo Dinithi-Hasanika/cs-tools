@@ -19,7 +19,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -112,7 +111,7 @@ func TestCustomDashboardService_RequiresToken(t *testing.T) {
 
 func TestCustomDashboardService_RequiresEmailClaim(t *testing.T) {
 	svc := NewCustomDashboardService(&fakeCustomDashboardRepo{}, savedFilterViewUsers())
-	ctx := contextWithUserIDToken(fakeJWTWithUserID(t, "asgardeo-only"))
+	ctx := contextWithUserIDToken(fakeJWTWithUserID(t, "no-email-claim"))
 	_, err := svc.List(ctx)
 	wantValidationError(t, err)
 }
@@ -230,37 +229,24 @@ func TestCustomDashboardService_Save_TrimsNameKeepsDefinition(t *testing.T) {
 	}
 }
 
-func fiftyDashboards(includeID string) []domain.CustomDashboardSummary {
-	out := make([]domain.CustomDashboardSummary, 0, domain.MaxCustomDashboards)
-	for i := 0; i < domain.MaxCustomDashboards; i++ {
-		out = append(out, domain.CustomDashboardSummary{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i)})
-	}
-	if includeID != "" {
-		out[0].ID = includeID
-	}
-	return out
-}
-
-func TestCustomDashboardService_Save_LimitBlocksNewDashboard(t *testing.T) {
-	repo := &fakeCustomDashboardRepo{list: fiftyDashboards("")}
-	svc, ctx := customDashboardSvc(t, repo)
-	_, err := svc.Save(ctx, testCustomDashboardID, validDashboardSave())
-	wantValidationError(t, err)
-	if repo.upsertCalled {
-		t.Error("Upsert was called over the limit")
-	}
-}
-
-func TestCustomDashboardService_Save_LimitAllowsReplacing(t *testing.T) {
-	// The id in the list is upper case: ids compare without case.
-	repo := &fakeCustomDashboardRepo{list: fiftyDashboards(strings.ToUpper(testCustomDashboardID))}
+func TestCustomDashboardService_Save_LeavesTheLimitToTheRepository(t *testing.T) {
+	// The limit is checked once, by the repository under the owner's lock:
+	// Save does not list the owner's dashboards first.
+	repo := &fakeCustomDashboardRepo{listErr: errors.New("List must not be called")}
 	svc, ctx := customDashboardSvc(t, repo)
 	if _, err := svc.Save(ctx, testCustomDashboardID, validDashboardSave()); err != nil {
-		t.Fatalf("replacing at the limit: %v", err)
+		t.Fatalf("Save: %v", err)
 	}
 	if !repo.upsertCalled {
 		t.Error("Upsert was not called")
 	}
+}
+
+func TestCustomDashboardService_Save_PassesTheLimitThrough(t *testing.T) {
+	repo := &fakeCustomDashboardRepo{upsertErr: &apierror.ValidationError{Msg: "at most 50 saved dashboards are allowed"}}
+	svc, ctx := customDashboardSvc(t, repo)
+	_, err := svc.Save(ctx, testCustomDashboardID, validDashboardSave())
+	wantValidationError(t, err)
 }
 
 func TestCustomDashboardService_Save_OtherOwnersIDIsNotFound(t *testing.T) {

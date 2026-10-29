@@ -29,8 +29,10 @@ the registry itself, so it is configured in one place.
 ### `POST /ai/dashboards/generate`
 
 Body `{prompt, draft?, teams}`: the prompt (trimmed, 1-2000 characters), the dashboard being edited in the
-definition file format (the backend's `draftToDefinition`; absent or null on a first message) and the teams
-a dashboard can filter by (`{key, name, family, field}`, only teams with a group). Unknown fields are a 400.
+definition file format (the backend's `draftToDefinition`; absent or null on a first message; at most 64 KiB,
+the size entity-service allows a saved definition) and the teams a dashboard can filter by
+(`{key, name, family, field}`, only teams with a group). Unknown fields are a 400. The draft cap bounds what
+one call can send the model; the per-user rate limit is the CSM portal backend's.
 
 The service makes one call and returns **every JSON object in the reply, in order** (`candidates`), or the
 model's sentence when its last object is the catalogue's refusal shape `{"error": "..."}` (`declined`), plus

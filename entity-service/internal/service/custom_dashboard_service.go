@@ -75,7 +75,9 @@ func (s *customDashboardService) Get(ctx context.Context, id string) (domain.Cus
 }
 
 // Save creates the dashboard, or replaces it when the caller already has one
-// with this id. Only a new dashboard counts against MaxCustomDashboards.
+// with this id. Only a new dashboard counts against MaxCustomDashboards; the
+// repository checks that under a per-owner lock, so two saves at the same time
+// cannot both pass it.
 func (s *customDashboardService) Save(ctx context.Context, id string, req domain.SaveCustomDashboardRequest) (domain.CustomDashboard, error) {
 	if err := validateCustomDashboardID(id); err != nil {
 		return domain.CustomDashboard{}, err
@@ -88,26 +90,6 @@ func (s *customDashboardService) Save(ctx context.Context, id string, req domain
 	if err != nil {
 		return domain.CustomDashboard{}, err
 	}
-
-	// A quick answer for the common case; the repository repeats the check
-	// under a per-owner lock, which is what holds when two saves race.
-	existing, err := s.repo.List(ctx, ownerID)
-	if err != nil {
-		return domain.CustomDashboard{}, err
-	}
-	replacing := false
-	for _, d := range existing {
-		if strings.EqualFold(d.ID, id) {
-			replacing = true
-			break
-		}
-	}
-	if !replacing && len(existing) >= domain.MaxCustomDashboards {
-		return domain.CustomDashboard{}, &apierror.ValidationError{
-			Msg: fmt.Sprintf("at most %d saved dashboards are allowed", domain.MaxCustomDashboards),
-		}
-	}
-
 	d, err := s.repo.Upsert(ctx, ownerID, id, clean)
 	if err != nil {
 		return domain.CustomDashboard{}, err

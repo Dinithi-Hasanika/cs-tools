@@ -39,7 +39,8 @@ type CustomDashboardRepository interface {
 	Get(ctx context.Context, ownerID, id string) (*domain.CustomDashboard, error)
 	// Upsert creates the dashboard, or replaces it when the owner already has one with this id.
 	// nil when the id belongs to another owner; a ConflictError when the owner has another
-	// dashboard with that name.
+	// dashboard with that name; a ValidationError when a new dashboard would take the owner
+	// past domain.MaxCustomDashboards (checked under a per-owner lock).
 	Upsert(ctx context.Context, ownerID, id string, req domain.SaveCustomDashboardRequest) (*domain.CustomDashboard, error)
 	// Delete removes one of the owner's dashboards; false when the owner has none with that id.
 	Delete(ctx context.Context, ownerID, id string) (bool, error)
@@ -71,6 +72,8 @@ func customDashboardNameConflict(err error, name string) error {
 	return nil
 }
 
+// List is the owner's dashboards without their definitions, ordered by name
+// (case-insensitively, then id); an empty slice when there are none.
 func (r *customDashboardRepo) List(ctx context.Context, ownerID string) ([]domain.CustomDashboardSummary, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT id::text, name, created_on, updated_on FROM custom_dashboard
@@ -95,6 +98,8 @@ func (r *customDashboardRepo) List(ctx context.Context, ownerID string) ([]domai
 	return out, nil
 }
 
+// Get is one of the owner's dashboards with its definition; nil when the
+// owner has none with that id (another owner's dashboard included).
 func (r *customDashboardRepo) Get(ctx context.Context, ownerID, id string) (*domain.CustomDashboard, error) {
 	d, err := scanCustomDashboard(r.db.QueryRow(ctx,
 		`SELECT `+customDashboardColumns+` FROM custom_dashboard
@@ -109,10 +114,38 @@ func (r *customDashboardRepo) Get(ctx context.Context, ownerID, id string) (*dom
 	return &d, nil
 }
 
+// Upsert saves the dashboard inside one transaction that first takes a lock
+// for the owner, then counts the owner's dashboards: a new one beyond
+// domain.MaxCustomDashboards is refused there, so two saves at the same time
+// cannot both pass the count. Replacing one of the owner's own dashboards is
+// never refused. Saves by different owners do not wait for each other.
 func (r *customDashboardRepo) Upsert(ctx context.Context, ownerID, id string, req domain.SaveCustomDashboardRequest) (*domain.CustomDashboard, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("upsert custom dashboard: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once Commit has succeeded
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))`, "custom-dashboard-owner:"+ownerID); err != nil {
+		return nil, fmt.Errorf("upsert custom dashboard: lock: %w", err)
+	}
+	var count int
+	var replacing bool
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*), COALESCE(bool_or(id = $2::uuid), false)
+		 FROM custom_dashboard WHERE owner_user_id = $1::uuid`,
+		ownerID, id).Scan(&count, &replacing); err != nil {
+		return nil, fmt.Errorf("upsert custom dashboard: count: %w", err)
+	}
+	if !replacing && count >= domain.MaxCustomDashboards {
+		return nil, &apierror.ValidationError{
+			Msg: fmt.Sprintf("at most %d saved dashboards are allowed", domain.MaxCustomDashboards),
+		}
+	}
+
 	// The WHERE on the update keeps another owner's row untouched: the
 	// statement then returns no row.
-	d, err := scanCustomDashboard(r.db.QueryRow(ctx,
+	d, err := scanCustomDashboard(tx.QueryRow(ctx,
 		`INSERT INTO custom_dashboard (id, owner_user_id, name, definition)
 		 VALUES ($1::uuid, $2::uuid, $3, $4)
 		 ON CONFLICT (id) DO UPDATE
@@ -129,9 +162,14 @@ func (r *customDashboardRepo) Upsert(ctx context.Context, ownerID, id string, re
 		}
 		return nil, fmt.Errorf("upsert custom dashboard: %w", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("upsert custom dashboard: commit: %w", err)
+	}
 	return &d, nil
 }
 
+// Delete removes one of the owner's dashboards, and its shares with it (they
+// cascade); false when the owner has none with that id.
 func (r *customDashboardRepo) Delete(ctx context.Context, ownerID, id string) (bool, error) {
 	tag, err := r.db.Exec(ctx,
 		`DELETE FROM custom_dashboard WHERE owner_user_id = $1::uuid AND id = $2::uuid`,

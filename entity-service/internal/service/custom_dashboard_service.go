@@ -38,6 +38,7 @@ func NewCustomDashboardService(repo repository.CustomDashboardRepository, userRe
 	return &customDashboardService{repo: repo, userRepo: userRepo}
 }
 
+// List is the caller's saved dashboards without their definitions; never nil.
 func (s *customDashboardService) List(ctx context.Context) (domain.CustomDashboardList, error) {
 	ownerID, err := s.currentUserID(ctx)
 	if err != nil {
@@ -53,6 +54,8 @@ func (s *customDashboardService) List(ctx context.Context) (domain.CustomDashboa
 	return domain.CustomDashboardList{Dashboards: dashboards}, nil
 }
 
+// Get is one of the caller's dashboards; a NotFoundError when the caller has
+// none with that id.
 func (s *customDashboardService) Get(ctx context.Context, id string) (domain.CustomDashboard, error) {
 	if err := validateCustomDashboardID(id); err != nil {
 		return domain.CustomDashboard{}, err
@@ -86,6 +89,8 @@ func (s *customDashboardService) Save(ctx context.Context, id string, req domain
 		return domain.CustomDashboard{}, err
 	}
 
+	// A quick answer for the common case; the repository repeats the check
+	// under a per-owner lock, which is what holds when two saves race.
 	existing, err := s.repo.List(ctx, ownerID)
 	if err != nil {
 		return domain.CustomDashboard{}, err
@@ -114,6 +119,8 @@ func (s *customDashboardService) Save(ctx context.Context, id string, req domain
 	return *d, nil
 }
 
+// Delete removes one of the caller's dashboards; a NotFoundError when the
+// caller has none with that id.
 func (s *customDashboardService) Delete(ctx context.Context, id string) error {
 	if err := validateCustomDashboardID(id); err != nil {
 		return err

@@ -23,10 +23,10 @@
 // It ships inside the binary (embedded at build time), so it is changed and
 // reviewed like code and a deployment without a file still works. It can be
 // overridden by a file: in Choreo a file mount (Configs & Secrets), named by
-// CATALOGUE_FILE. A file is checked when the service
-// starts (a missing or empty file fails the start, so a mistyped path is
-// caught there) and re-read on every request, so a changed mount applies
-// without a rebuild.
+// CATALOGUE_FILE. The file is read once, when the service starts (a missing
+// or empty file fails the start, so a mistyped path is caught there), and
+// requests use that text with no file access. A changed mount applies on the
+// next start; in Choreo, changing a mount restarts the pod anyway.
 package catalogue
 
 import (
@@ -43,46 +43,41 @@ var dashboardEmbedded string
 // DashboardEmbedded returns the dashboard catalogue built into the binary.
 func DashboardEmbedded() string { return dashboardEmbedded }
 
-// Source supplies the catalogue's text: the built-in copy, or a file.
+// Source is the catalogue's text, from the built-in copy or a file read
+// when it was made.
 type Source struct {
-	name     string // for messages: "dashboard catalogue"
-	embedded string
-	file     string
+	text string
+	file string // "" for the built-in copy
 }
 
 // NewDashboard is the dashboard catalogue: the built-in copy when file is
-// empty, else file. A file that cannot be read now is an error.
+// empty, else file, read now. A file that cannot be read, or is empty, is an
+// error.
 func NewDashboard(file string) (Source, error) {
 	return newSource("dashboard catalogue", dashboardEmbedded, file)
 }
 
 // newSource is a catalogue source for file (trimmed; empty means the built-in
-// copy), read once now so a missing or empty file fails at startup.
+// copy). A file is read here, once: an empty system prompt would let the model
+// invent fields, so an empty file is an error rather than a fall back to the
+// built-in copy, which would hide the mounted one.
 func newSource(name, embedded, file string) (Source, error) {
-	s := Source{name: name, embedded: embedded, file: strings.TrimSpace(file)}
-	if _, err := s.Text(); err != nil {
-		return Source{}, err
+	file = strings.TrimSpace(file)
+	if file == "" {
+		return Source{text: embedded}, nil
 	}
-	return s, nil
-}
-
-// Text returns the catalogue. A file source is re-read each time, and a file
-// that has gone or become empty is an error rather than a silent fall back to
-// the built-in copy, which would hide the mounted one. An empty system prompt
-// would let the model invent fields.
-func (s Source) Text() (string, error) {
-	if s.file == "" {
-		return s.embedded, nil
-	}
-	raw, err := os.ReadFile(s.file) // #nosec G304 -- path is deployment configuration (CATALOGUE_FILE), not user input
+	raw, err := os.ReadFile(file) // #nosec G304 -- path is deployment configuration (CATALOGUE_FILE), not user input
 	if err != nil {
-		return "", fmt.Errorf("read %s %q: %w", s.name, s.file, err)
+		return Source{}, fmt.Errorf("read %s %q: %w", name, file, err)
 	}
 	if strings.TrimSpace(string(raw)) == "" {
-		return "", fmt.Errorf("%s %q: %w", s.name, s.file, errEmpty)
+		return Source{}, fmt.Errorf("%s %q: %w", name, file, errEmpty)
 	}
-	return string(raw), nil
+	return Source{text: string(raw), file: file}, nil
 }
+
+// Text returns the catalogue: the text read when the source was made.
+func (s Source) Text() string { return s.text }
 
 // Origin names where the catalogue comes from, for the startup log line:
 // "built-in" or the file path.

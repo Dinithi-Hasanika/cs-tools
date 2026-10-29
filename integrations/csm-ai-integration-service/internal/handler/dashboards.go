@@ -53,15 +53,14 @@ const (
 // statuses and messages. The "message" is for logs and people reading the
 // response, never model output or user text.
 const (
-	CodeInvalidRequest       = "invalid_request"
-	CodeNotConfigured        = "not_configured"
-	CodeCatalogueUnavailable = "catalogue_unavailable"
-	CodeRefused              = "refused"
-	CodeTruncated            = "truncated"
-	CodeUnusable             = "unusable"
-	CodeTimeout              = "timeout"
-	CodeModelCallFailed      = "model_call_failed"
-	CodeInternal             = "internal"
+	CodeInvalidRequest  = "invalid_request"
+	CodeNotConfigured   = "not_configured"
+	CodeRefused         = "refused"
+	CodeTruncated       = "truncated"
+	CodeUnusable        = "unusable"
+	CodeTimeout         = "timeout"
+	CodeModelCallFailed = "model_call_failed"
+	CodeInternal        = "internal"
 )
 
 // dashboardGenerator is dashboards.Generator.
@@ -117,7 +116,6 @@ type errorBody struct {
 //   - 200 {"candidates": [...]} or {"declined": "<the model's sentence>"}
 //   - 400 invalid_request         the body, prompt, draft or teams
 //   - 503 not_configured          no API key
-//   - 503 catalogue_unavailable   a mounted catalogue that cannot be read
 //   - 422 refused                 the model refused
 //   - 502 truncated / unusable    the reply was cut off / holds no JSON object
 //   - 504 timeout                 the model call ran out of time
@@ -213,9 +211,6 @@ func decodeGenerateRequest(w http.ResponseWriter, r *http.Request) (dashboards.R
 func writeGenerateError(w http.ResponseWriter, r *http.Request, err error) {
 	ctx := r.Context()
 	switch {
-	case errors.Is(err, dashboards.ErrCatalogue):
-		slog.ErrorContext(ctx, "dashboard generate: catalogue unavailable", "err", err)
-		writeError(w, http.StatusServiceUnavailable, CodeCatalogueUnavailable, "the catalogue cannot be read")
 	case errors.Is(err, dashboards.ErrRefused):
 		slog.InfoContext(ctx, "dashboard generate: model refused")
 		writeError(w, http.StatusUnprocessableEntity, CodeRefused, "the model refused the request")

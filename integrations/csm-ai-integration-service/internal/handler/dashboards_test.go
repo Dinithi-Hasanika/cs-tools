@@ -151,7 +151,6 @@ func TestGenerateMapsEveryError(t *testing.T) {
 		status int
 		code   string
 	}{
-		{fmt.Errorf("%w: gone", dashboards.ErrCatalogue), http.StatusServiceUnavailable, CodeCatalogueUnavailable},
 		{dashboards.ErrRefused, http.StatusUnprocessableEntity, CodeRefused},
 		{dashboards.ErrTruncated, http.StatusBadGateway, CodeTruncated},
 		{dashboards.ErrUnusable, http.StatusBadGateway, CodeUnusable},

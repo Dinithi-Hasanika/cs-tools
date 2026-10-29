@@ -664,14 +664,14 @@ already established for its own `/health` vs `/health/database`:
   whatever orchestrator) should wire up as the restart/drain-triggering probe.
 - **`GET /health/dependencies`** (`internal/handler/health.go`) — aggregates this backend's own
   upstream integrations: `"SCIM Service"`, `"Updates Service"`, `"CSM Notification Service"`,
-  `"CSM Integration Service"`, `"Engineering Entity Service"` — the response's `name` values are
+  `"CSM Integration Service"`, `"Engineering Entity Service"`, `"CSM AI Integration Service"` — the response's `name` values are
   human-readable display names, not package/env-var identifiers, so use these exact strings (not
   `csm-notification-service` or similar) when checking a caller against this response. This
   backend's own core `entity-service` is deliberately excluded (this backend depends on it for
   nearly every request; checking it here was an explicit product decision to leave out). Each
   listed dependency reports one of `ok`/`down`/`not_configured` — `not_configured` when that
   dependency's base URL env var is unset (`CSM_NOTIFICATION_SERVICE_BASE_URL`/
-  `CSM_INTEGRATION_SERVICE_BASE_URL`/`ENGINEERING_ENTITY_BASE_URL`, all optional; SCIM/Updates are
+  `CSM_INTEGRATION_SERVICE_BASE_URL`/`ENGINEERING_ENTITY_BASE_URL`/`CSM_AI_INTEGRATION_SERVICE_BASE_URL`, all optional; SCIM/Updates are
   always configured so only ever report `ok`/`down`). Checks run concurrently, each bounded by its
   own 5s timeout so one slow upstream can't hang the whole response. Overall `status` is `degraded`
   (HTTP `503`) if any dependency is `down`; `not_configured` never counts as a failure on its own.
@@ -703,6 +703,7 @@ Each upstream service has its own client package under `internal/`:
 | `updates` | Updates service | Product update levels; returns typed structs (not raw passthrough) |
 | `csmnotification` | `integrations/csm-notification-service` | Health check only today (`Health(ctx)`, backing `GET /health/dependencies` — see "Health endpoints" below). Optional: unconfigured (`CSM_NOTIFICATION_SERVICE_BASE_URL` unset) means this dependency reports `not_configured` |
 | `csmintegration` | `integrations/csm-integration-service` | Same shape and same one purpose as `csmnotification` above, for `integrations/csm-integration-service` |
+| `csmai` | `integrations/csm-ai-integration-service` | The dashboard generators' model calls (`POST /ai/dashboards/generate`, `/generate-code`) plus `Health(ctx)`. Optional (`CSM_AI_INTEGRATION_SERVICE_BASE_URL`, `_SCOPES`, `_TIMEOUT` default 55s; https, or http for a local host only). When set, `handler.NewServiceDashboardGenerator` / `NewServiceCodeDashboardGenerator` (`dashboard_generator_service.go`) are the generators: the service builds the prompt and calls the model; this backend still converts the draft (`draftToDefinition`), sends the registry teams that have a group, keeps the last candidate `dashboard.ParseGenerated` accepts, swaps team keys for group ids (`WithDashboardTeams`) and maps the service's error `code` to the same statuses and messages (`serviceGenerateError`). Unset: the samples. **This backend holds no model client or model SDK** (`cmd/server/no_model_sdk_test.go` fails if `go.mod` requires, or any file imports, one); the catalogues live in the service, and `internal/dashboard`'s `TestParseGenerated_TheCatalogueExampleIsValid` reads the service's `catalogue.md` so its example keeps passing this backend's check |
 
 New upstream services get their own package under `internal/` following the same `Client` + `do()` pattern. `entity` is the exception: because it hosts multiple, separately-deployed/differently-authenticated services, it uses a `<Name>Config`/`<Name>Client` pair per service/file instead of one shared `Client` for the whole package — `CustomerEntityClient`/`EngineeringEntityClient`.
 
@@ -804,6 +805,16 @@ The server auto-loads `.env` from the working directory at startup (silently ign
 Flags named `CSM_MIGRATION_<FEATURE>_ENABLED` gate customer-onboarding cutover features. Each is **off unless its value is exactly `true`** (whitespace-trimmed — `1`, `TRUE`, `yes` are all off), deliberately stricter than the `strconv.ParseBool` leniency `SFTPGO_ATTACHMENT_STORAGE_ENABLED` has: these are cutover switches that must never flip on by accident. Off means **no behaviour change at all**: the handler is not constructed and the route is not registered in `cmd/server/main.go`, so the path 404s like any unknown one. Resolve a flag with a `load<Feature>Enabled()` in `main.go` backed by a pure `<feature>Enabled(raw string) bool` that `main_test.go` table-tests.
 
 - `CSM_MIGRATION_ONBOARDING_STATUS_ENABLED` → `GET /projects/{id}/onboarding-steps` (`OnboardingStepHandler`, `internal/handler/onboarding_steps.go`, `PermView`). It pages through the entity service's onboarding ledger (`CustomerEntityClient.SearchOnboardingSteps`, `internal/entity/onboarding.go` — a **typed** method, unlike the raw-passthrough rest of `customer.go`, because the handler regroups rows) with `filters.projectId`, at the upstream cap of 50 rows a page and at most `maxOnboardingStepPages` (40) pages, then regroups the flat newest-first rows into one entry per membership (invited email) with steps in flow order IDENTITY → DATABASE → EMAIL → REGISTRATION. It reports only what the ledger row holds (`step`, `status`, `attemptCount`, `lastError`, `eventType`, `eventModifiedOn`, `updatedOn`) — nothing derived or enriched; `lastError` is upstream error text and is passed through untouched for the webapp to render as plain text. Hitting the page cap sets `truncated: true` and logs a warning rather than failing. The webapp matches memberships to the project's contact rows by lower-cased email because `ProjectContact` carries no membership or `project_contact` id.
+
+**`DASHBOARD_GENERATE_CODE_ENABLED`** (not a `CSM_MIGRATION_*` cutover flag, but the same shape) keeps the
+code approach to dashboard generation dark until phase 2: exactly `true` (whitespace trimmed) registers
+`POST /dashboards/generate-code` and builds its handler (`loadGenerateCodeEnabled` / `generateCodeEnabled`
+in `cmd/server/main.go`, pinned by `generate_code_flag_test.go`); anything else leaves both out. Off, a POST
+to the path answers **405**, not 404, because `GET /dashboards/{dashboardId}` matches the path; the code
+handler is never reached either way. The route stays in `openapi.yaml` (the route-coverage test reads
+`main.go` as text, so a flagged registration still counts). The webapp (`isCodeDashboardGenerationEnabled`)
+and csm-ai-integration-service gate their side under the same name, so the three are turned on together:
+with the backend on and the service off, the call gets the service's 404 and shows "couldn't be reached".
 
 ## Commands
 

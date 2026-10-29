@@ -1125,18 +1125,18 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 	// notification-service clock either never gets scheduled or has to
 	// wait for Reconcile on that process's next restart. Registering first
 	// guarantees the row already exists by the time any consumer of this
-	// event asks about it. Scoped to req.Type == "case" only (plain support
-	// cases) -- service_request/engagement/security_report_analysis/
-	// announcement have no sla_policy naming convention this engine's
-	// resolver understands (see sla_policy_resolver.go's own doc comment on
-	// scope), and are out of scope for this change. Shares s.slaEngine==nil
+	// event asks about it. Scoped to slaClockEligibleCreateTypes (see that
+	// var's own doc comment, sla_engine_service.go, for which types are
+	// covered and why) -- engagement/announcement have no confirmed,
+	// non-duplicated sla_policy coverage and are out of scope for this
+	// change. Shares s.slaEngine==nil
 	// guard implicitly (RegisterCaseClocks is itself a no-op-safe
 	// best-effort call), and deliberately does its own GetCaseByID fetch
 	// rather than reusing publishCaseCreated's internal one (which isn't
 	// exposed to this call site) -- same "independent re-fetch" pattern
 	// every other best-effort hook in this file already uses
 	// (applyResponseSLAOnComment, applyCustomerReplyStateTransition).
-	if req.Type == "case" {
+	if slaClockEligibleCreateTypes[req.Type] {
 		s.registerCaseSLAClocks(ctx, resp.Case.ID)
 	}
 	s.publishCaseCreated(ctx, req, resp.Case.ID)

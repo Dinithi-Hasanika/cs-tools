@@ -760,11 +760,10 @@ func (s *caseService) CreateCase(ctx context.Context, req domain.CreateCaseReque
 	if err != nil {
 		return domain.CreateCaseResponse{}, err
 	}
-	// SLA-clock registration is scoped to req.Type == "case" only -- the
+	// SLA-clock registration is scoped to slaClockEligibleCreateTypes -- the
 	// same restriction snCaseService.CreateCase applies (see its own
-	// comment): service_request/engagement/security_report_analysis/
-	// announcement have no sla_policy naming convention this engine's
-	// resolver understands. Best-effort and nil-safe: s.slaEngine is nil
+	// comment and that var's own doc comment for which types are covered
+	// and why). Best-effort and nil-safe: s.slaEngine is nil
 	// when WithSLAEngine was never wired in (e.g. CSM_SLA_ENGINE_ENABLED=
 	// false, or no database configured at all), and a missing/failed clock
 	// registration must never fail case creation, which has already
@@ -778,7 +777,7 @@ func (s *caseService) CreateCase(ctx context.Context, req domain.CreateCaseReque
 	// tracking whatsoever from creation onward, regardless of severity,
 	// until/unless its severity happened to change later (which calls
 	// ReviseCaseClocks, registering clocks as a side effect).
-	if s.slaEngine != nil && req.Type == "case" {
+	if s.slaEngine != nil && slaClockEligibleCreateTypes[req.Type] {
 		s.slaEngine.RegisterCaseClocks(ctx, c.ID, &req.Severity, req.ProjectID)
 	}
 	if len(watcherIDs) > 0 {
@@ -967,7 +966,7 @@ func (s *caseService) createCaseSNFirst(ctx context.Context, req domain.CreateCa
 	// has already committed by the time this runs, so the only remaining
 	// ordering constraint is "before the publish," which this now also
 	// satisfies -- see registerCaseSLAClocksEvent's own doc comment.
-	if req.Type == "case" {
+	if slaClockEligibleCreateTypes[req.Type] {
 		registerCaseSLAClocksEvent(ctx, s.slaEngine, s.GetCaseByID, c.ID)
 	}
 

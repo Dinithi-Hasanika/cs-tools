@@ -2470,10 +2470,34 @@ the Query/SecReport Analysis family) on no severity at all.
   (`"SecReport Analysis response (1 hour)"` and `"P1 - Response (Open
   Source)"`'s own SRA branch, confirmed against real staging data: same
   target, same duration, same trigger) once every-match registration
-  shipped — not yet resolved; needs a decision on which of the two,
-  if either, should be retired or narrowed. Zero matches is logged and
-  treated as "no clock registered", exactly like the old design's absent
-  map entry.
+  shipped — **resolved**: the dedicated SRA policy was kept and the SRA
+  branch stripped out of `"P1 - Response (Open Source)"` entirely (data
+  migration, not code — applied directly to staging, same convention as
+  every other `sla_policy` row fix; see "Database migrations" below). Zero
+  matches is logged and treated as "no clock registered", exactly like the
+  old design's absent map entry.
+- **Clock registration at CREATE time is scoped to `slaClockEligibleCreateTypes`
+  (`sla_engine_service.go`)**, not every case-like `req.Type` — checked at all
+  three creation call sites (`case_service.go`'s `CreateCase` and
+  `createCaseSNFirst`, `sn_case_service.go`'s `CreateCase`) before calling
+  `RegisterCaseClocks`/`registerCaseSLAClocksEvent`. This used to be
+  hardcoded to `"case"` alone, on the (now outdated) assumption that no other
+  type had sla_policy coverage this resolver could cleanly match.
+  `security_report_analysis` and `service_request` have since been confirmed
+  clean (one RESPONSE, one RESOLUTION policy each — see the duplicate-policy
+  fix just above and "Database migrations" below) and were added to the set.
+  A real, confirmed-live gap this closed: every `service_request` case ever
+  created — Customer Portal included — had registered **zero** SLA clocks
+  from creation onward, despite `"ServiceRequest SLA"` being an active,
+  correctly-matching RESPONSE policy the whole time; the gate, not the
+  policy, was the problem. `engagement`/`announcement` remain excluded — no
+  clean, confirmed sla_policy coverage exists for either yet, and
+  registering clocks against the wrong or duplicate policy is worse than
+  registering none. `ReviseCaseClocks`/`ApplyCaseStateEffects` (severity and
+  state changes, below) are **not** gated this way — they already run for
+  every case-like type, so a case of an eligible type that somehow missed
+  clock registration at creation still picks it up on its first severity or
+  state change.
 - **`RegisterCaseClocks`/`ReviseCaseClocks`** iterate all three targets
   (`slaTargetOrder`) and resolve each independently — a clock target is
   registered only when some real policy's `start_condition` actually

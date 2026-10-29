@@ -35,6 +35,7 @@ import {
   Headset,
   HeartPulse,
   KeyRound,
+  LayoutDashboard,
   LifeBuoy,
   Megaphone,
   RefreshCw,
@@ -129,10 +130,39 @@ export interface CsmNavSection extends CsmNavNode {
  */
 export const CSM_NAV_ITEMS: CsmNavSection[] = [
   {
+    // Route-backed tabs (the Customers shape): CsmDashboardsLayout draws them.
+    // System Dashboards shares the section's own path, so it is the landing
+    // tab and owns every /dashboard/:dashboardId(/:teamId) page. My
+    // Dashboards (generating and saving) is for CS engineers and admins
+    // (canWrite is exactly that group); Shared Dashboards is for every portal
+    // role, like System, since anyone a dashboard is shared with must be able
+    // to open it. Their static paths outrank /dashboard/:dashboardId in React
+    // Router.
     id: "dashboard",
-    label: "Dashboard",
+    label: "Dashboards",
     href: "/dashboard",
     icon: ChartColumn,
+    children: [
+      {
+        id: "dashboard.system",
+        label: "System Dashboards",
+        href: "/dashboard",
+        icon: ChartColumn,
+      },
+      {
+        id: "dashboard.my",
+        label: "My Dashboards",
+        href: "/dashboard/my",
+        requires: "canWrite",
+        icon: LayoutDashboard,
+      },
+      {
+        id: "dashboard.shared",
+        label: "Shared Dashboards",
+        href: "/dashboard/shared",
+        icon: UsersRound,
+      },
+    ],
   },
   {
     id: "support",

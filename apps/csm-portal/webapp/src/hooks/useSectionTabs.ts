@@ -174,15 +174,31 @@ export function enabledPathTabKeys(sectionId: string): string[] {
   return enabledNavChildren(section).map(pathTabKey);
 }
 
+/**
+ * The route tab whose path is the longest prefix of `pathname` (the path
+ * itself or a page below it). Longest, not first: a tab at its section's own
+ * root path (`/dashboard`) is also a prefix of its sibling tabs' paths
+ * (`/dashboard/my`) and must not win on them.
+ */
+export function routeTabForPath(
+  tabs: SectionTab[],
+  pathname: string,
+): SectionTab | undefined {
+  let best: SectionTab | undefined;
+  for (const tab of tabs) {
+    const matches = pathname === tab.key || pathname.startsWith(`${tab.key}/`);
+    if (matches && (!best || tab.key.length > best.key.length)) best = tab;
+  }
+  return best;
+}
+
 /** Tab strip for a section whose tabs are child routes. */
 export function useRouteTabs(sectionId: string): SectionTabsState {
   const { pathname } = useLocation();
   const navigate = useNavTransition();
   const tabs = tabsFor(sectionId, (node) => navNodePath(node));
 
-  const current = tabs.find(
-    (tab) => pathname === tab.key || pathname.startsWith(`${tab.key}/`),
-  );
+  const current = routeTabForPath(tabs, pathname);
   const activeKey = resolveActiveKey(tabs, current?.key ?? null);
 
   return {

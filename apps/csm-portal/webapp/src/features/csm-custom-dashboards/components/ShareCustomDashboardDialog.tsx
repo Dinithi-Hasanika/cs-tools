@@ -89,6 +89,7 @@ const TEAM_FAMILIES: { family: string; label: string }[] = [
   { family: "sre", label: "SRE" },
 ];
 
+/** The readable label of a team family, e.g. "CRE ABT"; "Team" when unknown. */
 function familyLabel(family: string | undefined): string {
   return TEAM_FAMILIES.find((f) => f.family === family)?.label ?? "Team";
 }
@@ -226,6 +227,10 @@ export default function ShareCustomDashboardDialog({
 
   const sharedPeople = shares.data ?? [];
   const sharedTeams = teamShares.data ?? [];
+  // The two lists load separately: when only one fails, the other stays on
+  // screen (and its shares can still be removed).
+  const peopleFailed = shares.isError || shares.data === null;
+  const teamsFailed = teamShares.isError || teamShares.data === null;
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
@@ -376,16 +381,21 @@ export default function ShareCustomDashboardDialog({
           <Box aria-label="Shared with">
             {shares.isLoading || teamShares.isLoading ? (
               <Skeleton variant="rounded" height={36} />
-            ) : shares.isError || shares.data === null || teamShares.isError || teamShares.data === null ? (
+            ) : peopleFailed && teamsFailed ? (
               <Typography variant="body2" color="error">
                 Could not load who this dashboard is shared with.
               </Typography>
-            ) : sharedPeople.length === 0 && sharedTeams.length === 0 ? (
+            ) : !peopleFailed && !teamsFailed && sharedPeople.length === 0 && sharedTeams.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
                 Not shared with anyone yet.
               </Typography>
             ) : (
               <>
+                {teamsFailed && (
+                  <Typography variant="body2" color="error" sx={{ px: 1, py: 0.5 }}>
+                    Could not load the teams this dashboard is shared with.
+                  </Typography>
+                )}
                 {sharedTeams.map((s) => (
                   <Box key={s.team.key || s.team.name} sx={{ display: "flex", alignItems: "center", gap: 1.25, px: 1, py: 0.5 }}>
                     <Avatar sx={{ width: 28, height: 28 }}>
@@ -419,6 +429,11 @@ export default function ShareCustomDashboardDialog({
                     )}
                   </Box>
                 ))}
+                {peopleFailed && (
+                  <Typography variant="body2" color="error" sx={{ px: 1, py: 0.5 }}>
+                    Could not load the people this dashboard is shared with.
+                  </Typography>
+                )}
                 {sharedPeople.map((s) => {
                   const name = s.user.name || s.user.email;
                   return (

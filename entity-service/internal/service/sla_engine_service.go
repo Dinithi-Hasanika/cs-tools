@@ -26,6 +26,27 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/slacondition"
 )
 
+// slaClockEligibleCreateTypes are the case-like req.Type values this
+// engine's own clock registration runs for on CREATE -- case_service.go's
+// CreateCase/createCaseSNFirst and sn_case_service.go's CreateCase each
+// check req.Type against this set before calling RegisterCaseClocks/
+// registerCaseSLAClocksEvent, rather than hardcoding "case" alone the way
+// this used to work. That restriction predates this engine actually having
+// confirmed, non-duplicated policy coverage for any other type: "case" was
+// the only type with a sla_policy row this resolver could cleanly match.
+// security_report_analysis and service_request have since been confirmed
+// (and, for security_report_analysis, fixed) to resolve to exactly one
+// RESPONSE and one RESOLUTION policy each, same as "case" -- see
+// entity-service/CLAUDE.md's own note on this. engagement and announcement
+// are deliberately still excluded: no clean sla_policy coverage has been
+// confirmed for either, and registering clocks against the wrong or
+// duplicate policy is worse than registering none.
+var slaClockEligibleCreateTypes = map[string]bool{
+	"case":                     true,
+	"security_report_analysis": true,
+	"service_request":          true,
+}
+
 // SLAEngineService is this service's own in-process SLA clock engine: it
 // registers, completes, pauses, resumes and cancels source='CSM' "sla"
 // rows (migration 0134's own original enum intent -- see

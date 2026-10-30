@@ -33,6 +33,17 @@ paths:
         order, or the model's sentence when it declined. The caller decides
         which candidate, if any, is a valid dashboard.
       operationId: generateDashboard
+      parameters:
+        - name: X-CSM-User-ID
+          in: header
+          required: false
+          description: >
+            The id of the portal user the call is made for (never their email),
+            logged with the call's token usage. For attribution only; up to 128
+            characters, a longer value is ignored.
+          schema:
+            type: string
+            maxLength: 128
       requestBody:
         required: true
         content:

@@ -329,9 +329,7 @@ func TestSLAEngineService_CompleteWorkaroundClock(t *testing.T) {
 }
 
 // TestSLAEngineService_CompleteFixEtaSharedClocks verifies sharing a fix ETA
-// with the customer completes WORKAROUND and RESOLUTION, and -- with no
-// severity recorded for the case (a non-"case" type, or a facts lookup the
-// test leaves unseeded) -- does NOT also complete RESPONSE.
+// with the customer completes BOTH the workaround and resolution clocks.
 func TestSLAEngineService_CompleteFixEtaSharedClocks(t *testing.T) {
 	repo := newFakeFullSLAEngineRepo()
 	svc := NewSLAEngineService(repo)
@@ -341,54 +339,6 @@ func TestSLAEngineService_CompleteFixEtaSharedClocks(t *testing.T) {
 	want := []string{"case-5|WORKAROUND", "case-5|RESOLUTION"}
 	if len(repo.completed) != len(want) {
 		t.Fatalf("completed = %v, want %v", repo.completed, want)
-	}
-	for i, w := range want {
-		if repo.completed[i] != w {
-			t.Errorf("completed[%d] = %q, want %q", i, repo.completed[i], w)
-		}
-	}
-}
-
-// TestSLAEngineService_CompleteFixEtaSharedClocks_S0ToS3AlsoCompletesResponse
-// is the real behavior this change adds: for a case whose current severity
-// is S0-S3, sharing a fix ETA completes RESPONSE too, alongside WORKAROUND/
-// RESOLUTION.
-func TestSLAEngineService_CompleteFixEtaSharedClocks_S0ToS3AlsoCompletesResponse(t *testing.T) {
-	for _, severity := range []string{"S0", "S1", "S2", "S3"} {
-		t.Run(severity, func(t *testing.T) {
-			repo := newFakeFullSLAEngineRepo()
-			repo.factsByCase["case-eta"] = repository.CaseFacts{Severity: severity}
-			svc := NewSLAEngineService(repo)
-
-			svc.CompleteFixEtaSharedClocks(context.Background(), "case-eta")
-
-			want := []string{"case-eta|WORKAROUND", "case-eta|RESOLUTION", "case-eta|RESPONSE"}
-			if len(repo.completed) != len(want) {
-				t.Fatalf("completed = %v, want %v", repo.completed, want)
-			}
-			for i, w := range want {
-				if repo.completed[i] != w {
-					t.Errorf("completed[%d] = %q, want %q", i, repo.completed[i], w)
-				}
-			}
-		})
-	}
-}
-
-// TestSLAEngineService_CompleteFixEtaSharedClocks_S4DoesNotCompleteResponse
-// pins the explicit exclusion: an S4 (Low) case's RESPONSE clock is not
-// considered satisfied by a shared fix ETA, even though WORKAROUND/
-// RESOLUTION still complete unconditionally.
-func TestSLAEngineService_CompleteFixEtaSharedClocks_S4DoesNotCompleteResponse(t *testing.T) {
-	repo := newFakeFullSLAEngineRepo()
-	repo.factsByCase["case-s4"] = repository.CaseFacts{Severity: "S4"}
-	svc := NewSLAEngineService(repo)
-
-	svc.CompleteFixEtaSharedClocks(context.Background(), "case-s4")
-
-	want := []string{"case-s4|WORKAROUND", "case-s4|RESOLUTION"}
-	if len(repo.completed) != len(want) {
-		t.Fatalf("completed = %v, want %v: RESPONSE must not complete for S4", repo.completed, want)
 	}
 	for i, w := range want {
 		if repo.completed[i] != w {

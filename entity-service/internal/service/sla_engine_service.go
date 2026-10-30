@@ -130,14 +130,13 @@ type SLAEngineService interface {
 	// was provided" signal that exists anywhere in the domain model.
 	CompleteWorkaroundClock(ctx context.Context, caseID string)
 	// CompleteFixEtaSharedClocks marks the case's CSM-authored "workaround"
-	// AND "resolution" clocks ACHIEVED unconditionally, PLUS "response" when
-	// the case's current severity is S0-S3 (never S4) -- see
-	// slaFixEtaResponseEligibleSeverities' own doc comment. Called whenever
-	// work_item.eta_shared_on becomes non-null (checked on every UpdateCase
-	// call, both data sources -- see entity-service/CLAUDE.md's own note on
-	// why the trigger is that column, not a request field). Once WSO2 has
-	// committed a fix timeline to the customer, none of the three clocks has
-	// anything further to track for an S0-S3 case.
+	// AND "resolution" clocks ACHIEVED -- called when a PATCH shares a fix
+	// ETA with the customer (req.AddPublicComment true alongside a fix-ETA
+	// date, the webapp's "Share fix ETA with customer" action; ServiceNow
+	// data source only -- see case_service.go's own UpdateCase rejection
+	// list, AddPublicComment has no Postgres equivalent). Once WSO2 has
+	// committed a fix timeline to the customer, neither clock has anything
+	// further to track.
 	CompleteFixEtaSharedClocks(ctx context.Context, caseID string)
 	// ApplyCaseStateEffects evaluates the case's CURRENTLY ACTIVE clocks
 	// (RESPONSE/WORKAROUND/RESOLUTION) against their OWN bound sla_policy's
@@ -416,16 +415,6 @@ func (s *slaEngineService) CompleteWorkaroundClock(ctx context.Context, caseID s
 	}
 }
 
-// slaFixEtaResponseEligibleSeverities are the case severities for which
-// CompleteFixEtaSharedClocks also completes RESPONSE, alongside WORKAROUND/
-// RESOLUTION -- "S0".."S3", explicitly excluding "S4" (Low) per product
-// decision: an S4 case's own RESPONSE policy (when one exists at all) is not
-// considered satisfied just because a fix ETA was shared. A case with no
-// severity at all ("", a non-"case" type) is excluded the same way.
-var slaFixEtaResponseEligibleSeverities = map[string]bool{
-	"S0": true, "S1": true, "S2": true, "S3": true,
-}
-
 // CompleteFixEtaSharedClocks implements SLAEngineService.
 func (s *slaEngineService) CompleteFixEtaSharedClocks(ctx context.Context, caseID string) {
 	if _, err := s.repo.CompleteClock(ctx, caseID, slaClockTypeTarget[slaClockTypeWorkaround]); err != nil {
@@ -433,20 +422,6 @@ func (s *slaEngineService) CompleteFixEtaSharedClocks(ctx context.Context, caseI
 	}
 	if _, err := s.repo.CompleteClock(ctx, caseID, slaClockTypeTarget[slaClockTypeResolution]); err != nil {
 		slog.ErrorContext(ctx, "sla engine: complete resolution clock on fix eta shared failed", "caseId", caseID, "err", err)
-	}
-	// RESPONSE completes too, but only for S0-S3 -- unlike WORKAROUND/
-	// RESOLUTION above, which complete unconditionally regardless of
-	// severity, so a facts-lookup failure here never blocks those two.
-	facts, err := s.repo.GetCaseFacts(ctx, caseID)
-	if err != nil {
-		slog.ErrorContext(ctx, "sla engine: complete response clock on fix eta shared: load case facts failed", "caseId", caseID, "err", err)
-		return
-	}
-	if !slaFixEtaResponseEligibleSeverities[facts.Severity] {
-		return
-	}
-	if _, err := s.repo.CompleteClock(ctx, caseID, slaClockTypeTarget[slaClockTypeResponse]); err != nil {
-		slog.ErrorContext(ctx, "sla engine: complete response clock on fix eta shared failed", "caseId", caseID, "err", err)
 	}
 }
 

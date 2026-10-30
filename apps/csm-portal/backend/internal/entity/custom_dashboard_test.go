@@ -256,6 +256,23 @@ func TestGetSharedCustomDashboard(t *testing.T) {
 	}
 }
 
+// A dashboard whose owner's user was deleted comes from entity-service with
+// "owner": null.
+func TestSharedCustomDashboards_OwnerDeletedIsNil(t *testing.T) {
+	listClient, _ := newCustomDashboardTestClient(t, http.StatusOK,
+		`{"dashboards":[{"id":"`+testCustomDashboardID+`","name":"Orphan","owner":null,"sharedOn":"a","updatedOn":"b"}]}`)
+	list, err := listClient.ListSharedCustomDashboards(userContext())
+	if err != nil || len(list) != 1 || list[0].Owner != nil {
+		t.Fatalf("list = %+v, %v; want one dashboard with no owner", list, err)
+	}
+	getClient, _ := newCustomDashboardTestClient(t, http.StatusOK,
+		`{"id":"`+testCustomDashboardID+`","name":"Orphan","definition":"{\"widgets\":[]}","owner":null,"sharedOn":"a","updatedOn":"b"}`)
+	d, err := getClient.GetSharedCustomDashboard(userContext(), testCustomDashboardID)
+	if err != nil || d.Owner != nil || d.Definition != `{"widgets":[]}` {
+		t.Fatalf("dashboard = %+v, %v; want one with no owner", d, err)
+	}
+}
+
 func TestCustomDashboardShareClient_PassesStatusErrorsThrough(t *testing.T) {
 	cases := []struct {
 		name   string

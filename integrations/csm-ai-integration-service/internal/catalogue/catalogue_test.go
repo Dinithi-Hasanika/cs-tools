@@ -30,6 +30,8 @@ func TestBuiltInCatalogue(t *testing.T) {
 	}
 }
 
+// TestNoFileIsTheBuiltInCopy checks that an empty or blank file setting uses
+// the built-in catalogue.
 func TestNoFileIsTheBuiltInCopy(t *testing.T) {
 	for _, file := range []string{"", "   "} {
 		d, err := NewDashboard(file)
@@ -39,13 +41,15 @@ func TestNoFileIsTheBuiltInCopy(t *testing.T) {
 		if d.Origin() != "built-in" {
 			t.Errorf("origin = %q, want built-in", d.Origin())
 		}
-		if text, _ := d.Text(); text != DashboardEmbedded() {
+		if d.Text() != DashboardEmbedded() {
 			t.Error("dashboard Text() is not the built-in catalogue")
 		}
 	}
 }
 
-func TestAMountedFileOverridesAndIsReReadOnEveryCall(t *testing.T) {
+// TestAMountedFileOverridesAndIsReadOnceAtStart checks that a mounted file
+// replaces the built-in catalogue and that an edit after start is not seen.
+func TestAMountedFileOverridesAndIsReadOnceAtStart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalogue.md")
 	write(t, path, "first version")
 
@@ -56,12 +60,14 @@ func TestAMountedFileOverridesAndIsReReadOnEveryCall(t *testing.T) {
 	if s.Origin() != path {
 		t.Errorf("Origin() = %q, want the trimmed path %q", s.Origin(), path)
 	}
-	if text, _ := s.Text(); text != "first version" {
-		t.Fatalf("Text() = %q, want the file", text)
+	if s.Text() != "first version" {
+		t.Fatalf("Text() = %q, want the file", s.Text())
 	}
+	// Requests use the text read at start, with no file access: an edit
+	// applies on the next start.
 	write(t, path, "edited version")
-	if text, _ := s.Text(); text != "edited version" {
-		t.Errorf("after an edit Text() = %q, want the edited file (no rebuild or restart)", text)
+	if s.Text() != "first version" {
+		t.Errorf("after an edit Text() = %q, want the text read at start", s.Text())
 	}
 }
 
@@ -76,7 +82,9 @@ func TestAMissingOrEmptyFileFailsTheStart(t *testing.T) {
 	}
 }
 
-func TestAFileRemovedAfterStartIsAnErrorNotTheBuiltInCopy(t *testing.T) {
+// TestAFileRemovedAfterStartKeepsTheTextReadAtStart checks that removing the
+// mounted file after start keeps its text, not the built-in copy.
+func TestAFileRemovedAfterStartKeepsTheTextReadAtStart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalogue.md")
 	write(t, path, "mounted copy")
 	s, err := NewDashboard(path)
@@ -86,8 +94,8 @@ func TestAFileRemovedAfterStartIsAnErrorNotTheBuiltInCopy(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if text, err := s.Text(); err == nil {
-		t.Errorf("Text() = %q with no error, want an error: falling back would hide the mounted copy", firstLine(text))
+	if s.Text() != "mounted copy" {
+		t.Errorf("Text() = %q, want the mounted copy read at start, not the built-in one", firstLine(s.Text()))
 	}
 }
 

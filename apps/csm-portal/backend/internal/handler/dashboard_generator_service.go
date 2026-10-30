@@ -110,7 +110,7 @@ func (g *serviceDashboardGenerator) Generate(ctx context.Context, prompt string,
 // serviceGenerateError turns a csmai error into the generator errors
 // writeGenerateError maps:
 //
-//   - not_configured, catalogue_unavailable   ErrGenerateUnavailable (503)
+//   - not_configured                          ErrGenerateUnavailable (503)
 //   - refused                                 errGenerateRefused (422)
 //   - truncated / unusable                    errGenerateTruncated / errGenerateUnusable (502)
 //   - timeout, or the call itself timing out  errGenerateCall with a deadline (504)
@@ -121,7 +121,7 @@ func serviceGenerateError(err error) error {
 	var se *csmai.Error
 	if errors.As(err, &se) {
 		switch se.Code {
-		case csmai.CodeNotConfigured, csmai.CodeCatalogueUnavailable:
+		case csmai.CodeNotConfigured:
 			return fmt.Errorf("%w: %w", ErrGenerateUnavailable, err)
 		case csmai.CodeRefused:
 			return errGenerateRefused

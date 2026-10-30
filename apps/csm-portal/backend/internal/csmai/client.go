@@ -51,14 +51,13 @@ const maxResponseBytes = 4 << 20
 // Error codes the service answers with (its "code"). See the service's
 // CLAUDE.md for when each is given.
 const (
-	CodeInvalidRequest       = "invalid_request"
-	CodeNotConfigured        = "not_configured"
-	CodeCatalogueUnavailable = "catalogue_unavailable"
-	CodeRefused              = "refused"
-	CodeTruncated            = "truncated"
-	CodeUnusable             = "unusable"
-	CodeTimeout              = "timeout"
-	CodeModelCallFailed      = "model_call_failed"
+	CodeInvalidRequest  = "invalid_request"
+	CodeNotConfigured   = "not_configured"
+	CodeRefused         = "refused"
+	CodeTruncated       = "truncated"
+	CodeUnusable        = "unusable"
+	CodeTimeout         = "timeout"
+	CodeModelCallFailed = "model_call_failed"
 )
 
 // Config holds the client's configuration. Timeout bounds one generate call

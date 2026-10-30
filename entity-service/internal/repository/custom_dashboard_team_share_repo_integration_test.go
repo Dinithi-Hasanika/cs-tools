@@ -309,3 +309,89 @@ func TestCustomDashboardTeamShareIntegration_OneEntryPerDashboard(t *testing.T) 
 		t.Errorf("Zeta sharedViaTeam = %+v, want Lyra Test", list[1].SharedViaTeam)
 	}
 }
+
+// Owner D and three dashboards of D's own, for the test of deleting the owner:
+// D is removed during the test, so A's fixture dashboards are left alone.
+const (
+	cdbOwnerD            = "cdb00000-0000-4000-8000-00000000000d"
+	cdbDashboardPersonD  = "cdb00000-0000-4000-8000-0000000000d1"
+	cdbDashboardTeamD    = "cdb00000-0000-4000-8000-0000000000d2"
+	cdbDashboardUnshared = "cdb00000-0000-4000-8000-0000000000d3"
+)
+
+// TestCustomDashboardIntegration_DeletingTheOwnerKeepsOnlySharedDashboards
+// deletes an owner with a dashboard shared with a person, one shared with a
+// team and one shared with nobody (migration 0255): only the shared two stay,
+// with no owner, still visible to their recipients, and nobody can change them.
+func TestCustomDashboardIntegration_DeletingTheOwnerKeepsOnlySharedDashboards(t *testing.T) {
+	f := newTeamShareFixture(t)
+	ids := []string{cdbDashboardPersonD, cdbDashboardTeamD, cdbDashboardUnshared}
+	clean := func() {
+		// Shared dashboards outlive D with no owner, so they go by id.
+		if _, err := f.pool.Exec(f.ctx, `DELETE FROM custom_dashboard WHERE id = ANY($1::uuid[])`, ids); err != nil {
+			t.Fatalf("clean dashboards: %v", err)
+		}
+		if _, err := f.pool.Exec(f.ctx, `DELETE FROM "user" WHERE id = $1`, cdbOwnerD); err != nil {
+			t.Fatalf("clean user D: %v", err)
+		}
+	}
+	clean()
+	t.Cleanup(clean)
+	if _, err := f.pool.Exec(f.ctx, `INSERT INTO "user" (id, created_on, updated_on, user_name, email, first_name, last_name)
+		VALUES ($1, now(), now(), 'cdb-test-d', 'dan.d@example.test', 'Dan', 'Dee')`, cdbOwnerD); err != nil {
+		t.Fatalf("seed user D: %v", err)
+	}
+	dashboards := NewCustomDashboardRepository(f.pool)
+	people := NewCustomDashboardShareRepository(f.pool)
+	saveCustomDashboard(t, dashboards, cdbOwnerD, cdbDashboardPersonD, "Person shared", `{"v":1}`)
+	saveCustomDashboard(t, dashboards, cdbOwnerD, cdbDashboardTeamD, "Team shared", `{"v":2}`)
+	saveCustomDashboard(t, dashboards, cdbOwnerD, cdbDashboardUnshared, "Unshared", `{"v":3}`)
+	if ok, err := people.AddShare(f.ctx, cdbOwnerD, cdbDashboardPersonD, cdbOwnerA); err != nil || !ok {
+		t.Fatalf("AddShare = %v, %v", ok, err)
+	}
+	f.joinTeam(t, cdbOwnerB, cdbTeamOrion, "INTERNAL")
+	f.add(t, cdbOwnerD, cdbDashboardTeamD, cdbTeamOrion)
+
+	if _, err := f.pool.Exec(f.ctx, `DELETE FROM "user" WHERE id = $1`, cdbOwnerD); err != nil {
+		t.Fatalf("delete user D: %v", err)
+	}
+
+	// The unshared one went with D; the shared ones stay, with no owner.
+	var left []string
+	if err := f.pool.QueryRow(f.ctx,
+		`SELECT COALESCE(array_agg(name ORDER BY name), '{}') FROM custom_dashboard
+		 WHERE id = ANY($1::uuid[]) AND owner_user_id IS NULL`, ids).Scan(&left); err != nil {
+		t.Fatalf("read dashboards: %v", err)
+	}
+	if len(left) != 2 || left[0] != "Person shared" || left[1] != "Team shared" {
+		t.Fatalf("dashboards left = %v, want Person shared and Team shared, with no owner", left)
+	}
+
+	// The person and the team member still see theirs, with no owner.
+	toA, err := people.ListSharedWithUser(f.ctx, cdbOwnerA)
+	if err != nil || len(toA) != 1 || toA[0].ID != cdbDashboardPersonD || toA[0].Owner != nil {
+		t.Fatalf("shared with A = %+v, %v; want Person shared with no owner", toA, err)
+	}
+	got, err := people.GetSharedWithUser(f.ctx, cdbOwnerA, cdbDashboardPersonD)
+	if err != nil || got == nil || got.Definition != `{"v":1}` || got.Owner != nil {
+		t.Fatalf("GetSharedWithUser A = %+v, %v", got, err)
+	}
+	toB := f.sharedWith(t, cdbOwnerB)
+	if len(toB) != 1 || toB[0].ID != cdbDashboardTeamD || toB[0].Owner != nil || toB[0].SharedViaTeam == nil {
+		t.Fatalf("shared with B = %+v; want Team shared through Orion, with no owner", toB)
+	}
+
+	// Nobody can change or delete them now: the owner routes match no one.
+	if d, err := dashboards.Upsert(f.ctx, cdbOwnerA, cdbDashboardPersonD, domain.SaveCustomDashboardRequest{Name: "Taken", Definition: `{"v":9}`}); err != nil || d != nil {
+		t.Errorf("A's Upsert of the ownerless dashboard = %+v, %v; want nil, nil", d, err)
+	}
+	if deleted, err := dashboards.Delete(f.ctx, cdbOwnerA, cdbDashboardPersonD); err != nil || deleted {
+		t.Errorf("A's Delete of the ownerless dashboard = %v, %v; want false, nil", deleted, err)
+	}
+	if ok, err := people.AddShare(f.ctx, cdbOwnerA, cdbDashboardPersonD, cdbOwnerB); err != nil || ok {
+		t.Errorf("A's AddShare on the ownerless dashboard = %v, %v; want false, nil", ok, err)
+	}
+	if got, _ := people.GetSharedWithUser(f.ctx, cdbOwnerA, cdbDashboardPersonD); got == nil || got.Definition != `{"v":1}` {
+		t.Errorf("after the refused edits A sees %+v, want the unchanged dashboard", got)
+	}
+}

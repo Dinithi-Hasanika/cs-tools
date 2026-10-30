@@ -44,9 +44,6 @@ const maxTokens = 8000
 // Reasons a reply gives no dashboard candidates. The text says what happened
 // without the model's output, which may echo the user's prompt.
 var (
-	// ErrCatalogue: the catalogue could not be read (a mounted file that
-	// has gone or become empty).
-	ErrCatalogue = errors.New("catalogue unavailable")
 	// ErrCall: the call itself failed (the gateway answered an error, the
 	// connection failed, or it timed out). Wraps the SDK error.
 	ErrCall = errors.New("model call failed")
@@ -61,7 +58,7 @@ var (
 
 // Catalogue supplies the catalogue's text (catalogue.Source).
 type Catalogue interface {
-	Text() (string, error)
+	Text() string
 }
 
 // Request is one chat message. Draft is the dashboard being edited in the
@@ -100,11 +97,7 @@ func NewGenerator(client anthropic.Client, model string, timeout time.Duration, 
 
 // Generate makes one model call for one chat message.
 func (g *Generator) Generate(ctx context.Context, req Request) (Result, error) {
-	text, err := g.catalogue.Text()
-	if err != nil {
-		return Result{}, fmt.Errorf("%w: %w", ErrCatalogue, err)
-	}
-	system := teams.WithTeams(text, req.Teams)
+	system := teams.WithTeams(g.catalogue.Text(), req.Teams)
 
 	if g.timeout > 0 {
 		var cancel context.CancelFunc

@@ -43,7 +43,6 @@ the backend maps the code to its own status and user-facing text:
 |---|---|---|
 | 400 | `invalid_request` | the body, prompt, draft or teams |
 | 503 | `not_configured` | no `ANTHROPIC_API_KEY` |
-| 503 | `catalogue_unavailable` | a mounted catalogue that has gone or become empty |
 | 422 | `refused` | the model refused (stop reason `refusal`) |
 | 502 | `truncated` / `unusable` | the reply was cut off / holds nothing usable (no JSON object; for code, no usable code block) |
 | 504 | `timeout` | the model call ran out of time (`CLAUDE_TIMEOUT`) |
@@ -87,18 +86,18 @@ Every model call writes one line, `dashboard generate: token usage` (`logUsage` 
 The line goes to the service's log (stderr), like every other line, so in Choreo it is under the
 component's Observability -> Logs; search for `token usage`, or a `userID`. No file is written: a
 Choreo container's file system is read-only apart from `/tmp`, which a restart wipes. A request that
-fails before the call (an invalid body, `not_configured`, `catalogue_unavailable`) writes no usage line.
+fails before the call (an invalid body, `not_configured`) writes no usage line.
 
 ## Catalogue
 
 The model is given a catalogue: what a dashboard definition may contain, written for the model
 (`internal/catalogue/catalogue.md`). It is **built into the binary** as the default and can be
 **overridden by a file** that Choreo mounts (Configs & Secrets -> file mount), named by `CATALOGUE_FILE`.
-A file is checked at startup (missing or empty fails the start, so a mistyped path shows there) and
-**re-read on every request**, so an edited mount applies without a restart; a file that goes missing
-later is an error, never a silent fall back to the built-in copy. The startup log names its origin
-(`built-in` or the path). Keep the built-in copy current: they are what local runs and tests use, and
-what a deployment without the mount gets.
+The file is **read once, when the service starts** (missing or empty fails the start, so a mistyped path
+shows there); requests use that text with no file access, so an edited mount applies on the next start
+(in Choreo, changing a mount restarts the pod anyway). The startup log names its origin (`built-in` or the
+path). Keep the built-in copy current: it is what local runs and tests use, and what a deployment without
+the mount gets.
 
 **Editing `catalogue.md` can break a backend test, by design.** The backend's
 `TestParseGenerated_TheCatalogueExampleIsValid` (`apps/csm-portal/backend/internal/dashboard`) reads this

@@ -74,8 +74,8 @@ components:
     Error:
       description: >
         The request could not be answered; code says why (invalid_request,
-        not_configured, catalogue_unavailable, refused, truncated, unusable,
-        timeout, model_call_failed, internal).
+        not_configured, refused, truncated, unusable, timeout,
+        model_call_failed, internal).
       content:
         application/json:
           schema:

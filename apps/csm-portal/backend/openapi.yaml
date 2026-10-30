@@ -4605,7 +4605,7 @@ paths:
         says which); 502 when its answer is not
         a usable dashboard or the model cannot be reached; 504 when it takes
         too long; 503 when generation is unavailable (no sample loaded, or the
-        catalogue cannot be read). 413 when the dashboard being edited is over
+        AI integration service has no model key). 413 when the dashboard being edited is over
         64 KiB as a definition (the size a saved one may be), checked before
         any model call. 429, with Retry-After in seconds, when the caller has
         started more than DASHBOARD_GENERATE_LIMIT_PER_MINUTE (default 10)
@@ -18461,7 +18461,10 @@ components:
         name:
           type: string
         owner:
-          $ref: '#/components/schemas/CustomDashboardPerson'
+          allOf:
+            - $ref: '#/components/schemas/CustomDashboardPerson'
+          nullable: true
+          description: Who shared the dashboard (its owner); null once that user has been deleted.
         sharedViaTeam:
           $ref: '#/components/schemas/SharedViaTeam'
         sharedOn:
@@ -18492,7 +18495,10 @@ components:
         dashboard:
           $ref: '#/components/schemas/Dashboard'
         owner:
-          $ref: '#/components/schemas/CustomDashboardPerson'
+          allOf:
+            - $ref: '#/components/schemas/CustomDashboardPerson'
+          nullable: true
+          description: Who shared the dashboard (its owner); null once that user has been deleted.
         sharedViaTeam:
           $ref: '#/components/schemas/SharedViaTeam'
         sharedOn:

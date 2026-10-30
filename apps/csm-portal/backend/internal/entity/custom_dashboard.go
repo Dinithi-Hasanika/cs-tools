@@ -153,15 +153,17 @@ type customDashboardTeamShareListResponse struct {
 }
 
 // SharedCustomDashboardSummary is one dashboard another user shared with the
-// caller, without its definition. SharedViaTeam is the caller's team it was
-// shared with; nil when it was shared with the caller directly.
+// caller, without its definition. Owner is nil once the owner's user has been
+// deleted (the dashboard stays while it is shared). SharedViaTeam is the
+// caller's team it was shared with; nil when it was shared with the caller
+// directly.
 type SharedCustomDashboardSummary struct {
-	ID            string                `json:"id"`
-	Name          string                `json:"name"`
-	Owner         CustomDashboardPerson `json:"owner"`
-	SharedViaTeam *CustomDashboardTeam  `json:"sharedViaTeam"`
-	SharedOn      string                `json:"sharedOn"`
-	UpdatedOn     string                `json:"updatedOn"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Owner         *CustomDashboardPerson `json:"owner"`
+	SharedViaTeam *CustomDashboardTeam   `json:"sharedViaTeam"`
+	SharedOn      string                 `json:"sharedOn"`
+	UpdatedOn     string                 `json:"updatedOn"`
 }
 
 type sharedCustomDashboardListResponse struct {
@@ -169,16 +171,16 @@ type sharedCustomDashboardListResponse struct {
 }
 
 // SharedCustomDashboard is one dashboard shared with the caller, with its
-// definition (the owner's current version, view only). SharedViaTeam as in
-// SharedCustomDashboardSummary.
+// definition (the owner's current version, view only). Owner and
+// SharedViaTeam as in SharedCustomDashboardSummary.
 type SharedCustomDashboard struct {
-	ID            string                `json:"id"`
-	Name          string                `json:"name"`
-	Definition    string                `json:"definition"`
-	Owner         CustomDashboardPerson `json:"owner"`
-	SharedViaTeam *CustomDashboardTeam  `json:"sharedViaTeam"`
-	SharedOn      string                `json:"sharedOn"`
-	UpdatedOn     string                `json:"updatedOn"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Definition    string                 `json:"definition"`
+	Owner         *CustomDashboardPerson `json:"owner"`
+	SharedViaTeam *CustomDashboardTeam   `json:"sharedViaTeam"`
+	SharedOn      string                 `json:"sharedOn"`
+	UpdatedOn     string                 `json:"updatedOn"`
 }
 
 func customDashboardSharePath(id, userID string) string {

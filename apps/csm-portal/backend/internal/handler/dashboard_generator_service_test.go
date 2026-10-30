@@ -68,16 +68,18 @@ func TestServiceGenerator_DeclinedAndNoValidCandidate(t *testing.T) {
 	}
 }
 
+// TestServiceGenerateError_MapsEveryCode checks that every AI service error
+// code maps to its generate error (only a timeout counts as one), and that a
+// transport failure is a failed call.
 func TestServiceGenerateError_MapsEveryCode(t *testing.T) {
 	for code, want := range map[string]error{
-		csmai.CodeNotConfigured:        ErrGenerateUnavailable,
-		csmai.CodeCatalogueUnavailable: ErrGenerateUnavailable,
-		csmai.CodeRefused:              errGenerateRefused,
-		csmai.CodeTruncated:            errGenerateTruncated,
-		csmai.CodeUnusable:             errGenerateUnusable,
-		csmai.CodeTimeout:              errGenerateCall,
-		csmai.CodeModelCallFailed:      errGenerateCall,
-		csmai.CodeInvalidRequest:       errGenerateCall,
+		csmai.CodeNotConfigured:   ErrGenerateUnavailable,
+		csmai.CodeRefused:         errGenerateRefused,
+		csmai.CodeTruncated:       errGenerateTruncated,
+		csmai.CodeUnusable:        errGenerateUnusable,
+		csmai.CodeTimeout:         errGenerateCall,
+		csmai.CodeModelCallFailed: errGenerateCall,
+		csmai.CodeInvalidRequest:  errGenerateCall,
 	} {
 		err := serviceGenerateError(&csmai.Error{StatusCode: 500, Code: code})
 		if !errors.Is(err, want) {

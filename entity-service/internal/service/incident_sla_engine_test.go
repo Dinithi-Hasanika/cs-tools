@@ -47,11 +47,12 @@ func cloudIncidentPolicyCandidates() map[string][]repository.SLAPolicyRef {
 }
 
 // choreoServiceID/asgardeoServiceID are the two business_service rows the
-// real policy's conditions name, confirmed on staging (sysidToUUID of
-// b9c999f81b86a01000ae86acdd4bcb61 / 97ed1b8b1ba26c1000ae86acdd4bcbd3).
+// real policy's conditions name -- aliases of snChoreoServiceID/
+// snAsgardeoServiceID (sn_incident_service.go, this codebase's one existing
+// source of truth for these two ids), not a second hardcoded copy.
 const (
-	choreoServiceID   = "b9c999f8-1b86-a010-00ae-86acdd4bcb61"
-	asgardeoServiceID = "97ed1b8b-1ba2-6c10-00ae-86acdd4bcbd3"
+	choreoServiceID   = snChoreoServiceID
+	asgardeoServiceID = snAsgardeoServiceID
 )
 
 func TestSLAEngineService_RegisterIncidentClocks_CriticalChoreoServiceInterruptionMatches(t *testing.T) {

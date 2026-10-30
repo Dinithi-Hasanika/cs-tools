@@ -19,20 +19,29 @@ package service
 import "testing"
 
 // These three raw condition strings are the real "Cloud Incident - High
-// Priority" sla_policy row (id 5b117191-87ec-fd50-dcc8-c998cebb354d),
-// fetched directly from the table, not invented -- pinning the exact
-// behavior of translateIncidentSLACondition against real production data,
-// the same way sla_policy_resolver_test.go/sla_engine_service_test.go pin
-// against real case-policy condition text.
-const (
-	realCloudIncidentStartCondition  = "business_service=b9c999f81b86a01000ae86acdd4bcb61^ORbusiness_service=97ed1b8b1ba26c1000ae86acdd4bcbd3^priorityIN1,2^category=service_interruption^EQ"
+// Priority" sla_policy row, fetched directly from the table, not invented --
+// pinning the exact behavior of translateIncidentSLACondition against real
+// production data, the same way sla_policy_resolver_test.go/
+// sla_engine_service_test.go pin against real case-policy condition text.
+// The two business_service sys_ids are derived from snChoreoServiceID/
+// snAsgardeoServiceID (sn_incident_service.go, already the codebase's one
+// source of truth for these two ids) via uuidToSysid, rather than a second,
+// separately hardcoded copy of the same real ids.
+var (
+	realCloudIncidentStartCondition = "business_service=" + uuidToSysid(snChoreoServiceID) +
+		"^ORbusiness_service=" + uuidToSysid(snAsgardeoServiceID) +
+		"^priorityIN1,2^category=service_interruption^EQ"
 	realCloudIncidentStopCondition   = "stateIN3,6,7^EQ"
-	realCloudIncidentCancelCondition = "business_service!=b9c999f81b86a01000ae86acdd4bcb61^business_service!=97ed1b8b1ba26c1000ae86acdd4bcbd3^NQstate=8^NQcategory!=service_interruption^NQpriorityNOT IN1,2^EQ"
+	realCloudIncidentCancelCondition = "business_service!=" + uuidToSysid(snChoreoServiceID) +
+		"^business_service!=" + uuidToSysid(snAsgardeoServiceID) +
+		"^NQstate=8^NQcategory!=service_interruption^NQpriorityNOT IN1,2^EQ"
 )
 
 func TestTranslateIncidentSLACondition_RealCloudIncidentStartCondition(t *testing.T) {
 	got := translateIncidentSLACondition(realCloudIncidentStartCondition)
-	want := "business_service=b9c999f81b86a01000ae86acdd4bcb61^ORbusiness_service=97ed1b8b1ba26c1000ae86acdd4bcbd3^priorityINCRITICAL,HIGH^category=service_interruption"
+	want := "business_service=" + uuidToSysid(snChoreoServiceID) +
+		"^ORbusiness_service=" + uuidToSysid(snAsgardeoServiceID) +
+		"^priorityINCRITICAL,HIGH^category=service_interruption"
 	if got != want {
 		t.Errorf("translateIncidentSLACondition(start) =\n  %q\nwant\n  %q", got, want)
 	}
@@ -48,7 +57,9 @@ func TestTranslateIncidentSLACondition_RealCloudIncidentStopCondition(t *testing
 
 func TestTranslateIncidentSLACondition_RealCloudIncidentCancelCondition(t *testing.T) {
 	got := translateIncidentSLACondition(realCloudIncidentCancelCondition)
-	want := "business_service!=b9c999f81b86a01000ae86acdd4bcb61^business_service!=97ed1b8b1ba26c1000ae86acdd4bcbd3^NQstate=CANCELED^NQcategory!=service_interruption^NQpriorityNOT INCRITICAL,HIGH"
+	want := "business_service!=" + uuidToSysid(snChoreoServiceID) +
+		"^business_service!=" + uuidToSysid(snAsgardeoServiceID) +
+		"^NQstate=CANCELED^NQcategory!=service_interruption^NQpriorityNOT INCRITICAL,HIGH"
 	if got != want {
 		t.Errorf("translateIncidentSLACondition(cancel) =\n  %q\nwant\n  %q", got, want)
 	}

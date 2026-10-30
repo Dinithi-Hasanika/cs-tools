@@ -42,6 +42,9 @@ const (
 	cdbDashboard2 = "cdb00000-0000-4000-8000-000000000002"
 )
 
+// newCustomDashboardIntegrationPool connects to ENTITY_TEST_DATABASE_URL (the
+// test is skipped when it is unset) and seeds owners A and B, removing their
+// dashboards and the fixture dashboards before and after the test.
 func newCustomDashboardIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("ENTITY_TEST_DATABASE_URL")

@@ -112,6 +112,9 @@ func TestCustomDashboardShareHandler_OwnerSide(t *testing.T) {
 	})
 }
 
+// TestCustomDashboardShareHandler_RecipientSide covers the routes for the
+// dashboards shared with the caller: the list (with each owner) and one
+// dashboard by id.
 func TestCustomDashboardShareHandler_RecipientSide(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		svc := &stubCustomDashboardShareService{sharedList: domain.SharedCustomDashboardList{

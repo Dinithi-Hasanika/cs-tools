@@ -305,6 +305,19 @@ type snIncidentService struct {
 	// ServiceNow's service support groups and does not yet add these (see
 	// snGroupService.searchSupportGroups).
 	extraGroupIDs []string
+	// slaEngine registers this engine's own source='CSM' SLA clocks for an
+	// incident created through CreateIncident -- see
+	// SLAEngineService.RegisterIncidentClocks' own doc comment. nil-safe to
+	// omit; set via WithIncidentSLAEngine, never a constructor parameter
+	// (see that function's own doc comment for why). Deliberately NOT set
+	// on the mirror instance NewServiceNowIncidentMirrorService constructs
+	// for DataSourcePostgresServiceNowDualWrite -- that instance's
+	// CreateIncident runs before incidentService's own Postgres insert
+	// exists, and "sla".work_item_id has a hard foreign key against it;
+	// incidentService registers the clocks itself, once that insert has
+	// actually succeeded (createIncidentSNFirst), mirroring
+	// snCaseMirrorSvc's identical nil slaEngine for the same reason.
+	slaEngine SLAEngineService
 }
 
 // NewServiceNowIncidentService constructs an IncidentService backed by the
@@ -985,8 +998,28 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 	resp.Incident.CreatedOn = snResp.Incident.CreatedOn
 	resp.Incident.CreatedBy = snResp.Incident.CreatedBy
 	resp.Incident.Priority = incidentPriorityFor(req.Impact, req.Urgency)
+	registerIncidentSLAClocksEvent(ctx, s.slaEngine, resp.Incident.ID, resp.Incident.Priority)
 	s.publishIncidentCreated(ctx, req, resp.Incident.ID, resp.Incident.Number, resp.Incident.CreatedOn)
 	return resp, nil
+}
+
+// registerIncidentSLAClocksEvent is RegisterCaseClocks' incident call-site
+// helper (registerCaseSLAClocksEvent, sn_case_service.go) -- best-effort,
+// nil-safe, bounded by the same applyCaseStateSLATimeout. Unlike
+// registerCaseSLAClocksEvent, this needs no GetIncidentByID re-fetch: every
+// call site here already computed the incident's own just-created priority
+// directly (incidentPriorityFor), so there's nothing a fresh read would add.
+// priority is the DB enum label text (e.g. "CRITICAL") -- domain.IncidentPriority's
+// own string values already match it verbatim, so this is a plain cast, not
+// a translation.
+func registerIncidentSLAClocksEvent(ctx context.Context, slaEngine SLAEngineService, incidentID, priority string) {
+	if slaEngine == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, applyCaseStateSLATimeout)
+	defer cancel()
+	p := domain.IncidentPriority(priority)
+	slaEngine.RegisterIncidentClocks(ctx, incidentID, &p)
 }
 
 // publishIncidentCreated best-effort publishes an incident.created event for
@@ -1689,7 +1722,7 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 	// and gating on req.Priority alone meant that update published nothing
 	// and no ladder ever started.
 	var before domain.IncidentView
-	if s.publisher != nil && incidentUpdateTouchesEscalation(req) {
+	if (s.publisher != nil || s.slaEngine != nil) && incidentUpdateTouchesEscalation(req) {
 		if fetched, ferr := s.GetIncidentByID(ctx, req.ID); ferr == nil {
 			before = fetched
 		} else {
@@ -1709,6 +1742,26 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 	}
 
 	view := mapSNIncidentToView(snResp.Incident)
+
+	// Deliberately independent of s.publisher -- see
+	// incidentService.UpdateIncident's own identically-reasoned call site
+	// for why, and why it runs before publishEscalationSignals below rather
+	// than after. before is zero-valued when the pre-PATCH fetch above was
+	// skipped (incidentUpdateTouchesEscalation(req) was false, so neither
+	// state nor priority could have changed) or failed -- in the failure
+	// case this degrades to possibly-spurious revise/apply calls, the same
+	// accepted best-effort posture publishEscalationSignals already has for
+	// its own before.ID == nil guard.
+	if s.slaEngine != nil {
+		if req.State != nil {
+			s.slaEngine.ApplyIncidentStateEffects(ctx, req.ID, *req.State)
+		}
+		if incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
+			p := domain.IncidentPriority(*view.Priority)
+			s.slaEngine.ReviseIncidentClocks(ctx, req.ID, &p)
+		}
+	}
+
 	s.publishEscalationSignals(ctx, req, before, view)
 
 	return domain.UpdateIncidentResponse{

@@ -575,6 +575,43 @@ type incidentService struct {
 	// an SLA-shaped search or aggregate is answered by it instead of the
 	// Postgres sla_live-backed query, exactly as caseService does.
 	slaSearchDelegate slaDelegate[IncidentService]
+	// slaEngine registers/revises/evaluates this engine's own source='CSM'
+	// SLA clocks for incidents -- see SLAEngineService.RegisterIncidentClocks'
+	// own doc comment. nil-safe to omit (CSM_SLA_ENGINE_ENABLED=false, or no
+	// database configured at all): every call site below checks for nil
+	// first. Set post-construction via WithIncidentSLAEngine, for BOTH the
+	// plain-Postgres (NewIncidentServiceWithPublisher) and dual-write
+	// (NewIncidentServiceWithSNMirror) constructors -- deliberately not a
+	// constructor parameter on either, unlike caseService's slaEngine (which
+	// NewCaseServiceWithSNWriteback does take directly): several existing
+	// tests already construct NewIncidentServiceWithSNMirror positionally,
+	// and the decorator shape (routes.go calls WithIncidentSLAEngine once,
+	// after either branch) avoids changing that constructor's signature at
+	// all while still reaching both paths.
+	slaEngine SLAEngineService
+}
+
+// WithIncidentSLAEngine attaches the CSM-native SLA clock engine to an
+// already-constructed IncidentService -- *incidentService (built via
+// NewIncidentServiceWithPublisher or NewIncidentServiceWithSNMirror) or
+// *snIncidentService (built via NewServiceNowIncidentService; never the
+// mirror instance NewServiceNowIncidentMirrorService builds -- see that
+// struct field's own doc comment). A single decorator handling both types,
+// rather than a constructor parameter on either, because both constructors
+// already have several existing positional-argument test call sites;
+// mirrors WithSLAEngine's identical reasoning for caseService otherwise.
+// Without this, s.slaEngine is always nil, so an incident never gets SLA
+// clocks registered at creation or revised on a priority change. A no-op if
+// svc is neither known concrete type; slaEngine may itself be nil (engine
+// disabled, or no database), the normal "off" state.
+func WithIncidentSLAEngine(svc IncidentService, slaEngine SLAEngineService) IncidentService {
+	switch is := svc.(type) {
+	case *incidentService:
+		is.slaEngine = slaEngine
+	case *snIncidentService:
+		is.slaEngine = slaEngine
+	}
+	return svc
 }
 
 // setSLADelegate implements slaDelegateAcceptor[IncidentService].
@@ -853,10 +890,12 @@ func (s *incidentService) createIncidentPortal(ctx context.Context, req domain.C
 		return domain.CreateIncidentResponse{}, err
 	}
 
-	resp, err := s.repo.CreateIncident(ctx, req, incidentPriorityFor(req.Impact, req.Urgency), incidentSubcategoryValue(req), actorOf(ctx))
+	priority := incidentPriorityFor(req.Impact, req.Urgency)
+	resp, err := s.repo.CreateIncident(ctx, req, priority, incidentSubcategoryValue(req), actorOf(ctx))
 	if err != nil {
 		return domain.CreateIncidentResponse{}, err
 	}
+	registerIncidentSLAClocksEvent(ctx, s.slaEngine, resp.Incident.ID, priority)
 	// The enriched publish, not the title-only one. This create path arrived
 	// from upstream calling the 4-argument form, which predates the escalation
 	// ladder: it publishes an incident.created carrying only the subject, with
@@ -867,6 +906,17 @@ func (s *incidentService) createIncidentPortal(ctx context.Context, req domain.C
 	publishIncidentCreatedEvent(ctx, s.eventPublisher, req, resp.Incident.ID,
 		resp.Incident.Number, resp.Incident.CreatedOn, s.GetIncidentByID)
 	return resp, nil
+}
+
+// incidentPriorityOf returns v's priority as a plain string, "" when unset --
+// used by UpdateIncident's ReviseIncidentClocks gate to detect a genuine
+// priority change (before vs. after), including one driven by an
+// Impact/Urgency PATCH rather than an explicit Priority field.
+func incidentPriorityOf(v domain.IncidentView) string {
+	if v.Priority == nil {
+		return ""
+	}
+	return *v.Priority
 }
 
 // incidentPriorityFor is ServiceNow's incident priority lookup (dl_u_priority)
@@ -960,6 +1010,12 @@ func (s *incidentService) createIncidentSNFirst(ctx context.Context, req domain.
 			"incidentId", snResp.Incident.ID, "snNumber", snResp.Incident.Number, "error", err)
 		return domain.CreateIncidentResponse{}, err
 	}
+	// Only now -- the Postgres row "sla".work_item_id's hard foreign key
+	// depends on actually exists -- is it safe to register SLA clocks, same
+	// "wait for the real insert" reasoning as caseService.createCaseSNFirst's
+	// own slaEngine call (see that method's own doc comment for the
+	// foreign-key-violation bug this avoids).
+	registerIncidentSLAClocksEvent(ctx, s.slaEngine, resp.Incident.ID, priority)
 	// Only now -- Postgres has confirmed the row this mode's reads actually
 	// depend on -- is it safe to publish. See publishIncidentCreatedEvent's
 	// doc comment for why this can't just be snIncidentService's own
@@ -1086,6 +1142,31 @@ func (s *incidentService) UpdateIncident(ctx context.Context, req domain.UpdateI
 	if err != nil {
 		return domain.UpdateIncidentResponse{}, err
 	}
+
+	// Deliberately independent of s.eventPublisher, same reasoning
+	// caseService.UpdateCase's own ApplyCaseStateEffects/ReviseCaseClocks
+	// call sites give: a deployment without Event Hub configured must not
+	// lose SLA pause/resume/completion/revision as a side effect. Run
+	// before publishIncidentStopSignals below, not after, for the same
+	// ordering reason caseService revises BEFORE publishing
+	// case.severity_changed -- a consumer reacting to an incident event by
+	// re-reading this engine's current clocks must never observe the OLD
+	// ones. req.State != nil alone gates ApplyIncidentStateEffects (every
+	// effect it applies is idempotent, so a caller re-PATCHing the
+	// incident's own current state just harmlessly re-applies it); priority
+	// revision is gated on a GENUINE change (including one driven by an
+	// Impact/Urgency PATCH, not only an explicit Priority field), the same
+	// "only on real change" gate ReviseCaseClocks' own call site uses.
+	if s.slaEngine != nil {
+		if req.State != nil {
+			s.slaEngine.ApplyIncidentStateEffects(ctx, req.ID, *req.State)
+		}
+		if incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
+			p := domain.IncidentPriority(*view.Priority)
+			s.slaEngine.ReviseIncidentClocks(ctx, req.ID, &p)
+		}
+	}
+
 	publishIncidentStopSignals(ctx, s.eventPublisher, req, before, view)
 	s.recordIncidentFieldChanges(ctx, req, before, view, actor.Email)
 

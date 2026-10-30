@@ -85,7 +85,9 @@ func main() {
 	srv := &http.Server{
 		Handler: middleware.SecurityHeaders(
 			middleware.CorrelationID(
-				middleware.Logger(mux),
+				middleware.UserID(
+					middleware.Logger(mux),
+				),
 			),
 		),
 		ReadHeaderTimeout: 10 * time.Second,

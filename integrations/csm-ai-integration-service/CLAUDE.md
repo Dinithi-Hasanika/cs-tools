@@ -65,7 +65,29 @@ are set per environment in Configs & Secrets (the key as a secret).
   shared OAuth2 client-credentials app (the same pattern as `csm-notification-service`). The backend has
   already authenticated and authorised the end user. Do not make the endpoint Public, and do not add
   end-user token validation here without confirming that assumption has changed.
-- **No end-user identity is forwarded or needed.** The model call is the same for every user.
+- **The end user's id is forwarded, for the logs only.** The backend sends the signed-in user's id
+  (never their email) as `X-CSM-User-ID`; `middleware.UserID` puts it in the context and the log handler
+  adds it to every line as `userID`. Nothing is authorised by it, and the model call is the same for
+  every user. A header over 128 characters is ignored.
+
+## Token usage log
+
+Every model call writes one line, `dashboard generate: token usage` (`logUsage` in
+`internal/dashboards/generate.go`), whatever its outcome, since every reply spends tokens:
+
+| Field | |
+|---|---|
+| `userID`, `correlationID` | added by the log handler from the request (the same keys as the CSM portal backend's lines) |
+| `model` | `CLAUDE_MODEL` |
+| `outcome` | `ok`, `declined`, `refused`, `truncated`, `unusable`, or `failed` (no reply: a gateway error, a connection failure or a timeout, with 0 tokens) |
+| `stopReason` | the model's, empty when `failed` |
+| `inputTokens`, `outputTokens` | the reply's `usage` |
+| `durationMs` | the model call alone, the SDK's retry included |
+
+The line goes to the service's log (stderr), like every other line, so in Choreo it is under the
+component's Observability -> Logs; search for `token usage`, or a `userID`. No file is written: a
+Choreo container's file system is read-only apart from `/tmp`, which a restart wipes. A request that
+fails before the call (an invalid body, `not_configured`, `catalogue_unavailable`) writes no usage line.
 
 ## Catalogue
 
@@ -90,8 +112,8 @@ The Teams section is not in the file: the backend sends the team list with each 
 
 ## Conventions
 
-- Middleware chain: `SecurityHeaders -> CorrelationID -> Logger -> Mux`, as in `csm-integration-service`.
-  Correlation IDs carry the `cai-` prefix.
+- Middleware chain: `SecurityHeaders -> CorrelationID -> UserID -> Logger -> Mux`, as in
+  `csm-integration-service` plus `UserID`. Correlation IDs carry the `cai-` prefix.
 - **No prompts, drafts or model answers in logs.** They are users' text; log lengths, token counts,
   outcome and duration only.
 - The server's `WriteTimeout` follows the model's: `CLAUDE_TIMEOUT` plus a minute, never under two minutes

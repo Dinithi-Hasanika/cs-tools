@@ -175,7 +175,8 @@ func (c *Client) Health(ctx context.Context) error {
 
 // post sends body as JSON to path and decodes a 200 into out. The request
 // carries the caller's correlation id, so one chat message can be followed
-// across both services' logs.
+// across both services' logs, and the caller's user id, so the service can log
+// each model call's token usage against the user. The email is never sent.
 func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -188,6 +189,9 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	if id := middleware.CorrelationIDFromContext(ctx); id != "" {
 		req.Header.Set("X-CSM-Correlation-ID", id)
+	}
+	if user := middleware.UserInfoFromContext(ctx); user != nil && user.UserID != "" {
+		req.Header.Set("X-CSM-User-ID", user.UserID)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

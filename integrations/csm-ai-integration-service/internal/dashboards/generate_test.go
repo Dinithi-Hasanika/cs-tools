@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,6 +216,108 @@ func TestGenerateErrors(t *testing.T) {
 				t.Errorf("timeout err = %v, want a deadline", err)
 			}
 		})
+	}
+}
+
+// lockedBuffer is a log destination the gateway's goroutines and the test can
+// share.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// captureLog sends the default logger to a buffer, as JSON, for the test.
+func captureLog(t *testing.T) *lockedBuffer {
+	t.Helper()
+	out := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(out, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return out
+}
+
+// usageLines are the token usage lines in out, decoded.
+func usageLines(t *testing.T, out string) []map[string]any {
+	t.Helper()
+	var lines []map[string]any
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		if l == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(l), &rec); err != nil {
+			t.Fatalf("log line %q: %v", l, err)
+		}
+		if rec["msg"] == "dashboard generate: token usage" {
+			lines = append(lines, rec)
+		}
+	}
+	return lines
+}
+
+// TestGenerateLogsTokenUsageForEveryOutcome: every model call writes exactly one
+// token usage line with the model, the outcome, the tokens and the time the
+// call took, a failed call with no tokens, and the line never holds the
+// prompt or the reply.
+func TestGenerateLogsTokenUsageForEveryOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		gw      *fakeGateway
+		outcome string
+		tokens  float64
+	}{
+		{"ok", &fakeGateway{text: validGenerated, delay: 50 * time.Millisecond}, "ok", 5000},
+		{"declined", &fakeGateway{text: `{"error":"Not a dashboard request."}`}, "declined", 5000},
+		{"refusal", &fakeGateway{text: "no", stopReason: "refusal"}, "refused", 5000},
+		{"cut off", &fakeGateway{text: `{"displayName":`, stopReason: "max_tokens"}, "truncated", 5000},
+		{"no JSON", &fakeGateway{text: "I cannot help with that."}, "unusable", 5000},
+		{"gateway error", &fakeGateway{status: http.StatusUnauthorized, body: `{"type":"error","error":{"type":"authentication_error","message":"bad key"}}`}, "failed", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureLog(t)
+			_, _ = newTestGenerator(t, tc.gw, fixedCatalogue{text: "C"}, 5*time.Second).
+				Generate(context.Background(), Request{Prompt: "secret prompt text"})
+
+			lines := usageLines(t, out.String())
+			if len(lines) != 1 {
+				t.Fatalf("usage lines = %v, want one", lines)
+			}
+			l := lines[0]
+			if l["model"] != "claude-sonnet-5-5" || l["outcome"] != tc.outcome || l["inputTokens"] != tc.tokens {
+				t.Errorf("usage line = %v, want outcome %s and %v input tokens", l, tc.outcome, tc.tokens)
+			}
+			if tc.tokens > 0 && l["outputTokens"] != float64(400) {
+				t.Errorf("output tokens = %v, want 400", l["outputTokens"])
+			}
+			if ms, ok := l["durationMs"].(float64); !ok || (tc.name == "ok" && ms < 50) {
+				t.Errorf("durationMs = %v, want the call's time (at least the gateway's 50ms on ok)", l["durationMs"])
+			}
+			if strings.Contains(out.String(), "secret prompt") || strings.Contains(out.String(), "Top Customers") {
+				t.Errorf("log holds the prompt or the reply: %s", out.String())
+			}
+		})
+	}
+}
+
+// TestGenerateWithoutACatalogueLogsNoUsage: no call is made, so no usage line.
+func TestGenerateWithoutACatalogueLogsNoUsage(t *testing.T) {
+	out := captureLog(t)
+	_, _ = newTestGenerator(t, &fakeGateway{text: validGenerated}, fixedCatalogue{err: errors.New("gone")}, 5*time.Second).
+		Generate(context.Background(), Request{Prompt: "p"})
+	if lines := usageLines(t, out.String()); len(lines) != 0 {
+		t.Errorf("usage lines = %v, want none", lines)
 	}
 }
 

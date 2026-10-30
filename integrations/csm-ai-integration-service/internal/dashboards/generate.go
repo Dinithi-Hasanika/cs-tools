@@ -111,37 +111,65 @@ func (g *Generator) Generate(ctx context.Context, req Request) (Result, error) {
 		ctx, cancel = context.WithTimeout(ctx, g.timeout)
 		defer cancel()
 	}
+	start := time.Now()
 	msg, err := g.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(g.model),
 		MaxTokens: maxTokens,
 		System:    []anthropic.TextBlockParam{{Text: system}},
 		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(userMessage(req.Prompt, req.Draft)))},
 	})
+	took := time.Since(start)
 	if err != nil {
+		logUsage(ctx, g.model, outcomeFailed, "", anthropic.Usage{}, took)
 		return Result{}, fmt.Errorf("%w: %w", ErrCall, err)
 	}
-	slog.InfoContext(ctx, "dashboard generate: model replied",
-		"model", g.model, "stopReason", msg.StopReason,
-		"inputTokens", msg.Usage.InputTokens, "outputTokens", msg.Usage.OutputTokens)
+	res, outcome, err := readReply(msg)
+	logUsage(ctx, g.model, outcome, msg.StopReason, msg.Usage, took)
+	return res, err
+}
 
+// Outcomes of one model call, as the token usage line names them.
+const (
+	outcomeOK        = "ok"
+	outcomeDeclined  = "declined"
+	outcomeRefused   = "refused"
+	outcomeTruncated = "truncated"
+	outcomeUnusable  = "unusable"
+	outcomeFailed    = "failed" // no reply: the gateway answered an error, the connection failed, or it timed out
+)
+
+// readReply reads the model's reply into a result, and names its outcome.
+func readReply(msg *anthropic.Message) (Result, string, error) {
 	switch msg.StopReason {
 	case anthropic.StopReasonRefusal:
-		return Result{}, ErrRefused
+		return Result{}, outcomeRefused, ErrRefused
 	case anthropic.StopReasonMaxTokens:
-		return Result{}, ErrTruncated
+		return Result{}, outcomeTruncated, ErrTruncated
 	}
 
 	objects := jsonObjects(messageText(msg))
 	if len(objects) == 0 {
-		return Result{}, fmt.Errorf("%w: no JSON object in the reply", ErrUnusable)
+		return Result{}, outcomeUnusable, fmt.Errorf("%w: no JSON object in the reply", ErrUnusable)
 	}
 	res := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens}
 	if reason, ok := declineReason(objects[len(objects)-1]); ok {
 		res.Declined = reason
-		return res, nil
+		return res, outcomeDeclined, nil
 	}
 	res.Candidates = objects
-	return res, nil
+	return res, outcomeOK, nil
+}
+
+// logUsage writes the token usage line for one model call, whatever its
+// outcome, since every reply spends tokens; a failed call has none to report.
+// The correlation id and the portal user's id come from ctx (see
+// middleware.ConfigureLogger). The line never holds the prompt or the reply.
+// durationMs is the model call alone, the SDK's retry included.
+func logUsage(ctx context.Context, model, outcome string, stopReason anthropic.StopReason, usage anthropic.Usage, took time.Duration) {
+	slog.InfoContext(ctx, "dashboard generate: token usage",
+		"model", model, "outcome", outcome, "stopReason", stopReason,
+		"inputTokens", usage.InputTokens, "outputTokens", usage.OutputTokens,
+		"durationMs", took.Milliseconds())
 }
 
 // messageText is the text of a model reply, its text blocks joined.

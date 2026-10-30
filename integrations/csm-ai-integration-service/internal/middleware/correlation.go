@@ -87,9 +87,9 @@ func newCorrelationID() string {
 }
 
 // ctxHandler wraps a slog.Handler to automatically inject the correlation ID
-// from the request context into every log record produced via *Context methods.
-// Unlike apps/csm-portal/backend's own version, there is no authenticated-user ID
-// to attach here — this service has no inbound end-user auth of its own.
+// and the portal user's id (see UserID) from the request context into every log
+// record produced via *Context methods, under the same keys as
+// apps/csm-portal/backend's own version, so one search finds a call in both.
 type ctxHandler struct {
 	inner slog.Handler
 }
@@ -98,11 +98,14 @@ func (h ctxHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.inner.Enabled(ctx, level)
 }
 
-// Handle adds the request's correlation ID to the record, when the context
-// carries one, and passes it to the wrapped handler.
+// Handle adds the request's correlation ID and user id to the record, when the
+// context carries them, and passes it to the wrapped handler.
 func (h ctxHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := CorrelationIDFromContext(ctx); id != "" {
 		r.AddAttrs(slog.String("correlationID", id))
+	}
+	if id := UserIDFromContext(ctx); id != "" {
+		r.AddAttrs(slog.String("userID", id))
 	}
 	return h.inner.Handle(ctx, r)
 }
@@ -116,8 +119,8 @@ func (h ctxHandler) WithGroup(name string) slog.Handler {
 }
 
 // ConfigureLogger sets up the default slog logger with a handler that
-// automatically adds the correlation ID from the request context to every log
-// record. It writes directly to os.Stderr to avoid a deadlock: slog.SetDefault
+// automatically adds the correlation ID and user id from the request context to
+// every log record. It writes directly to os.Stderr to avoid a deadlock: slog.SetDefault
 // also redirects log.std's output through the new handler, and if the inner
 // handler were the old defaultHandler (which itself writes to log.std) a cycle
 // would form. Call once at startup before any log statements.

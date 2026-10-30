@@ -148,10 +148,22 @@ bug there yet — widening it to those two flavours too, if they ever need it, i
 not an oversight.
 
 **A tab visible only via an admin's own Feature Preview toggle now gets a distinct, filled "Preview" chip**
-(`SectionTabs.tsx`, `tab.previewedOnly`) — solid/colourful (`color="secondary" variant="filled"`), deliberately
-different from the WIP tab's outlined `color="warning"` chip, so an admin previewing a still-restricted feature
-is never left thinking "I can see this" means "this shipped for everyone." The tab itself stays fully enabled
-and clickable (unlike a WIP tab, which is `disabled`) — only the chip marks it as preview-only.
+(`SectionTabs.tsx`, `tab.previewedOnly`) — solid, in the theme's own primary (button) colour
+(`color="primary" variant="filled"`), deliberately different from the WIP tab's outlined `color="warning"`
+chip, so an admin previewing a still-restricted feature is never left thinking "I can see this" means "this
+shipped for everyone." The tab itself stays fully enabled and clickable (unlike a WIP tab, which is
+`disabled`) — only the chip marks it as preview-only. `isPreviewedOnly` (`featureFlags.ts`) compares `id`'s
+resolved state WITH the real preview overrides against its state with none, rather than checking
+`previewOverrides[id]` directly — a parent node can be promoted purely because one of its own DESCENDANTS was
+previewed (`featureState`'s own `hasPreviewedDescendant` promotion), with no override on the parent itself,
+and the direct check misses that case entirely (found by a CodeRabbit review on the PR that introduced this).
+
+**The sidebar carries the identical badge** (`CsmSideBar.tsx`, `Sidebar.ItemBadge color="primary"`) on a
+top-level item, a submenu parent (the same descendant-promotion case), and a submenu child — the same
+`isPreviewedOnly` call, same three render paths `featureState(..., "wip")` already has its own WIP badge/dim
+treatment in. A sibling descendant that is not itself previewed, under a still-hidden ancestor, is not
+rendered at all (not a bug — it inherits "hidden" the same as it always did); only the admin's own previewed
+node(s) get resurrected.
 
 ## Code organization
 

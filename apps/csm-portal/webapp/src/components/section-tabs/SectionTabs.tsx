@@ -122,9 +122,10 @@ export default function SectionTabs({
           ) : tab.previewedOnly ? (
             // Unlike the WIP chip, this tab is fully enabled -- only the chip
             // itself marks it as not generally available yet. A solid, filled
-            // chip (rather than WIP's outlined one) so it reads as a distinct,
-            // eye-catching "just you" signal rather than another flavour of
-            // WIP.
+            // chip in the theme's own primary (button) colour -- the same
+            // colour the app's primary actions use -- so it reads as a
+            // distinct, eye-catching "just you" signal rather than another
+            // flavour of WIP.
             <Tab
               key={tab.key}
               value={tab.key}
@@ -137,7 +138,7 @@ export default function SectionTabs({
                   <Chip
                     size="small"
                     label="Preview"
-                    color="secondary"
+                    color="primary"
                     variant="filled"
                     sx={{ height: 18, fontSize: 10, fontWeight: 600 }}
                   />

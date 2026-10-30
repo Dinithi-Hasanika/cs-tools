@@ -34,13 +34,13 @@
 -- VARCHAR or to TEXT is binary-coercible, so PostgreSQL does not rewrite the
 -- table and reuses that index's storage.
 --
--- Re-runnable: setting a column to the type it already has is a no-op. One
--- transaction with a short lock timeout, as 0239: ALTER TABLE takes ACCESS
--- EXCLUSIVE, so behind a long-running transaction on either table the file
--- fails after 5s instead of queueing every other query behind it.
+-- Re-runnable: setting a column to the type it already has is a no-op. No
+-- explicit transaction, so each ALTER TABLE is its own autocommit transaction
+-- and releases its ACCESS EXCLUSIVE lock before the next table is touched. A
+-- short session lock_timeout makes the file fail after 5s behind a long-running
+-- transaction instead of queueing every other query behind it (as 100021).
 
-BEGIN;
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 
 ALTER TABLE sf_opportunity_product
     ALTER COLUMN eng_product_code TYPE VARCHAR(255),
@@ -52,4 +52,4 @@ ALTER TABLE sf_invoice
     ALTER COLUMN description TYPE VARCHAR(255),
     ALTER COLUMN name TYPE VARCHAR(80);
 
-COMMIT;
+RESET lock_timeout;

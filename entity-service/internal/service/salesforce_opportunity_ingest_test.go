@@ -252,11 +252,12 @@ func TestMapSalesEntityOpportunity_WidenedLineItemColumns(t *testing.T) {
 	p.Name = sampleStr(strings.Repeat("n", 255))
 	p.ProductCode = sampleStr(strings.Repeat("c", 255))
 	p.Description = sampleStr(strings.Repeat("d", 4000))
+	opp.SubscriptionLineItems[0].Name = sampleStr(strings.Repeat("l", 376))
 	li := mapSalesEntityOpportunity(context.Background(), opp).LineItems[0]
 	for col, c := range map[string]struct {
 		got  *string
 		want int
-	}{"eng_product_code": {li.EngProductCode, 208}, "product_name": {li.ProductName, 255},
+	}{"name": {li.Name, 376}, "eng_product_code": {li.EngProductCode, 208}, "product_name": {li.ProductName, 255},
 		"product_code": {li.ProductCode, 255}, "product_description": {li.ProductDescription, 4000}} {
 		if n := utf8.RuneCountInString(derefString(c.got)); n != c.want {
 			t.Errorf("%s length = %d, want %d untouched", col, n, c.want)
@@ -265,9 +266,13 @@ func TestMapSalesEntityOpportunity_WidenedLineItemColumns(t *testing.T) {
 
 	p.EngProductCode = sampleStr(strings.Repeat("e", 300))
 	p.ProductUnit = sampleStr(strings.Repeat("u", 41))
+	opp.SubscriptionLineItems[0].Name = sampleStr(strings.Repeat("l", 400))
 	li = mapSalesEntityOpportunity(context.Background(), opp).LineItems[0]
 	if n := utf8.RuneCountInString(derefString(li.EngProductCode)); n != 255 {
 		t.Errorf("eng_product_code length = %d, want cut to 255", n)
+	}
+	if n := utf8.RuneCountInString(derefString(li.Name)); n != 376 {
+		t.Errorf("name length = %d, want cut to 376", n)
 	}
 	if n := utf8.RuneCountInString(derefString(li.ProductUnit)); n != 40 {
 		t.Errorf("product_unit length = %d, want cut to 40", n)

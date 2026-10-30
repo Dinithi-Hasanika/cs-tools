@@ -41,7 +41,7 @@ const (
 	maxSfOpportunityStageChars       = 40
 	maxSfOpportunityEulaVersionChars = 160
 	maxSfLineItemSfIDChars           = 40
-	maxSfLineItemNameChars           = 200
+	maxSfLineItemNameChars           = 376
 	maxSfLineItemProductNameChars    = 255
 	maxSfLineItemProductCodeChars    = 255
 	maxSfLineItemEngProductCodeChars = 255 // a comma-separated list of product abbreviations

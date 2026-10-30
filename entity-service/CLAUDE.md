@@ -799,7 +799,7 @@ acknowledged and ignored). Code: `internal/service/salesforce_opportunity_ingest
   (ServiceNow-derived; `TestSfOpportunitySQL_NeverTouchesServiceNowColumns` pins the
   column lists). Values longer than their VARCHAR (migration 0080) are truncated and logged.
   Migration 0254 widened the line-item columns to fit the upstream field lengths:
-  `eng_product_code`, `product_name` and `product_code` are VARCHAR(255) (`eng_product_code`
+  `name` is VARCHAR(376); `eng_product_code`, `product_name` and `product_code` are VARCHAR(255) (`eng_product_code`
   is a comma-separated list of product abbreviations and runs past 200 characters) and
   `product_description` is TEXT, never truncated. `product_unit`, `classification` and
   `environment` stay VARCHAR(40).

@@ -21,6 +21,7 @@
 -- but the data was silently damaged: eng_product_code (VARCHAR(40)) receives a
 -- comma-separated list of product abbreviations of 200+ characters.
 --
+--   sf_opportunity_product.name                  200 -> VARCHAR(376)
 --   sf_opportunity_product.eng_product_code      40  -> VARCHAR(255)
 --   sf_opportunity_product.product_name          100 -> VARCHAR(255)
 --   sf_opportunity_product.product_code          70  -> VARCHAR(255)
@@ -43,6 +44,7 @@
 SET lock_timeout = '5s';
 
 ALTER TABLE sf_opportunity_product
+    ALTER COLUMN name TYPE VARCHAR(376),
     ALTER COLUMN eng_product_code TYPE VARCHAR(255),
     ALTER COLUMN product_name TYPE VARCHAR(255),
     ALTER COLUMN product_code TYPE VARCHAR(255),

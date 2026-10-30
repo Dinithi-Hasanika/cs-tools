@@ -39,6 +39,10 @@ type fakeSLAEngineService struct {
 	completeWorkaroundCalls []string // caseID (workaround clock)
 	completeFixEtaCalls     []string // caseID (workaround+resolution clocks, fix ETA shared)
 	stateCalls              []fakeSLAStateCall
+
+	registerIncidentCalls []fakeSLAIncidentRegisterCall
+	reviseIncidentCalls   []fakeSLAIncidentRegisterCall
+	incidentStateCalls    []fakeSLAIncidentStateCall
 }
 
 type fakeSLARegisterCall struct {
@@ -50,6 +54,16 @@ type fakeSLARegisterCall struct {
 type fakeSLAStateCall struct {
 	caseID string
 	state  domain.CaseState
+}
+
+type fakeSLAIncidentRegisterCall struct {
+	incidentID string
+	priority   *domain.IncidentPriority
+}
+
+type fakeSLAIncidentStateCall struct {
+	incidentID string
+	state      domain.IncidentState
 }
 
 func (f *fakeSLAEngineService) RegisterCaseClocks(_ context.Context, caseID string, severity *domain.CaseSeverity, projectID string) {
@@ -74,6 +88,18 @@ func (f *fakeSLAEngineService) CompleteFixEtaSharedClocks(_ context.Context, cas
 
 func (f *fakeSLAEngineService) ApplyCaseStateEffects(_ context.Context, caseID string, state domain.CaseState) {
 	f.stateCalls = append(f.stateCalls, fakeSLAStateCall{caseID, state})
+}
+
+func (f *fakeSLAEngineService) RegisterIncidentClocks(_ context.Context, incidentID string, priority *domain.IncidentPriority) {
+	f.registerIncidentCalls = append(f.registerIncidentCalls, fakeSLAIncidentRegisterCall{incidentID, priority})
+}
+
+func (f *fakeSLAEngineService) ReviseIncidentClocks(_ context.Context, incidentID string, priority *domain.IncidentPriority) {
+	f.reviseIncidentCalls = append(f.reviseIncidentCalls, fakeSLAIncidentRegisterCall{incidentID, priority})
+}
+
+func (f *fakeSLAEngineService) ApplyIncidentStateEffects(_ context.Context, incidentID string, state domain.IncidentState) {
+	f.incidentStateCalls = append(f.incidentStateCalls, fakeSLAIncidentStateCall{incidentID, state})
 }
 
 // TestSNCaseService_CreateCase_RegistersSLAClocks verifies CreateCase, for

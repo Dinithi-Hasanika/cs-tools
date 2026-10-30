@@ -3070,6 +3070,81 @@ regardless of severity.
   also selects `best_case_eta`/`most_likely_eta`/`worst_case_eta`/
   `eta_shared_on` for the first time — previously write-only columns on
   this data source, never read back into a `CaseView` at all.
+- **Incidents are now wired into this same condition-driven engine too —
+  previously case-only.** `repository.IncidentFacts`/`GetIncidentFacts`
+  (small, no project/product/account-presence/response-comment concepts at
+  all — an incident has none of those in this engine's vocabulary),
+  `service.incidentConditionFacts` (the `slacondition.Facts` adapter),
+  `isIncidentPolicy` (classifies a candidate the same strict-inclusion way
+  `isCasePolicy` does, on `"business_service"` — the one marker confirmed
+  incident-exclusive in the real table), and three new `SLAEngineService`
+  methods — `RegisterIncidentClocks`/`ReviseIncidentClocks`/
+  `ApplyIncidentStateEffects` — mirroring `RegisterCaseClocks`/
+  `ReviseCaseClocks`/`ApplyCaseStateEffects` exactly. Wired into incident
+  CREATE (`incidentService.createIncidentPortal`/`createIncidentSNFirst`,
+  `snIncidentService.CreateIncident`) and UPDATE (both services' own
+  `UpdateIncident`, gated on `req.State`/a genuine priority change the same
+  way the case side gates on a genuine severity change). `slaEngineRepo`'s
+  write operations (`RegisterClock`/`CancelClock(ByPolicy)`/
+  `CompleteClock(ByPolicy)`/`SetPaused(ByPolicy)`/`ActiveClockPolicies`/
+  `ReviseClocks`) needed **no changes at all** — they were already generic
+  over `workItemID`, since `sla` is keyed by `work_item_id`, not anything
+  case-specific. `WithIncidentSLAEngine` is one decorator handling both
+  `*incidentService` and `*snIncidentService` (type switch), not a
+  constructor parameter on either — both constructors already have several
+  positional-argument test call sites, unlike `caseService`'s/
+  `snCaseService`'s own `slaEngine` constructor parameters.
+
+  **A separate translator was required, not a branch in the existing
+  one — a real vocabulary collision, not a style choice.** Case and
+  incident `sla_policy` rows share raw field *names* (`"priority"`,
+  `"state"`) over completely different ServiceNow numeric code vocabularies:
+  case state code `3` = `CLOSED`, incident state code `3` = `ON_HOLD`; case
+  state code `6` = `SOLUTION_PROPOSED`, incident state code `6` = `RESOLVED`.
+  Running an incident policy's condition text through the existing
+  `translateSLACondition`/`slaCaseStateCodes` would have silently
+  mistranslated `"Cloud Incident - High Priority"`'s own
+  `stop_condition` (`stateIN3,6,7`) into `stateINCLOSED,SOLUTION_PROPOSED,7`
+  — wrong on every value, confirmed by a test that asserts the two
+  translators must NEVER agree on this input
+  (`TestTranslateIncidentSLACondition_StateCodesDifferFromCaseTranslator`).
+  `service.translateIncidentSLACondition` (`incident_sla_condition_translate.go`)
+  is a fully separate function with its own `slaIncidentPriorityCodes`
+  (`1`-`5` → `CRITICAL`/`HIGH`/`MODERATE`/`LOW`/`PLANNING`) and
+  `slaIncidentStateCodes` (`1,2,3,6,7,8` →
+  `NEW`/`IN_PROGRESS`/`ON_HOLD`/`RESOLVED`/`CLOSED`/`CANCELED`) maps — new
+  `"business_service"`/`"category"` fields need no value translation at
+  all, since ServiceNow's own raw sys_id/lowercase-label spellings already
+  match `IncidentFacts`' output under `slacondition`'s case-insensitive
+  comparison. Same "runs at evaluation time on every read, not a one-time
+  migration" posture as the case translator, for the identical reason: the
+  external sync job rewrites `sla_policy`'s raw text on every delta sync.
+
+  **`incident_state_enum`'s real stored `CANCELED` value is spelled with
+  ONE L; `domain.IncidentStateCancelled`'s Go constant is spelled
+  `"CANCELLED"` with two** — confirmed directly against both the migration
+  (`0058_incident_table.sql`) and staging. A pre-existing, unrelated
+  mismatch, not fixed here — but `slaIncidentStateCodes`/`IncidentFacts`/
+  the new `incidentStateDBLabel` map (`sla_engine_service.go`, normalizing
+  an `ApplyIncidentStateEffects` caller's state override to the real DB
+  spelling) all deliberately use `"CANCELED"` (one L), not the Go constant's
+  string value — getting this wrong would make a just-cancelled incident's
+  own clock silently fail to cancel by one letter, with no visible error
+  (`slacondition`'s unknown/mismatched-clause failure mode is silent by
+  design). Covered by
+  `TestSLAEngineService_ApplyIncidentStateEffects_StateDBLabelNormalizesCancelledTypo`.
+
+  **Only one real `sla_policy` row matches anything today** —
+  `"Cloud Incident - High Priority"` (RESOLUTION, 4h, Choreo + Asgardeo
+  `business_service` only, Critical/High priority,
+  `category=service_interruption`), confirmed directly against the table,
+  not assumed. No RESPONSE/WORKAROUND policy exists for incidents at all,
+  and nothing covers Moderate/Low/Planning or any other service — the
+  engine is wired generically (the same way `engagement`/`announcement`
+  sit case-side with no confirmed policy coverage yet), but only this one
+  policy actually registers a clock until more policy data exists. No new
+  `sla_policy` row/migration was added as part of this — a pure code
+  change.
 
 ## Customer-reply state transition
 

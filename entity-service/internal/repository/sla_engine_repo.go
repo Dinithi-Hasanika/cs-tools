@@ -327,6 +327,49 @@ type CaseFacts struct {
 	CreatedOn time.Time
 }
 
+// IncidentFacts is CaseFacts' incident counterpart -- the subset of an
+// incident's current field values service.incidentConditionFacts needs to
+// evaluate an sla_policy condition against. Much smaller than CaseFacts: an
+// incident has no project/product/account-presence/response-comment
+// concepts in this engine's own vocabulary today, only the fields the one
+// real incident policy ("Cloud Incident - High Priority") actually
+// conditions on.
+//
+// Every field is the RAW incident_priority_enum/incident_state_enum/
+// incident_category_enum text Postgres stores (e.g. "CRITICAL", "CANCELED"
+// -- note one L, the real stored enum label; domain.IncidentStateCancelled's
+// Go constant is spelled "CANCELLED" and must NOT be used to build or
+// compare against this field). sla_policy's own incident conditions are
+// ServiceNow's raw numeric codes, not these labels -- service.
+// translateIncidentSLACondition (NOT service.translateSLACondition, which
+// uses an entirely different, case-specific numeric vocabulary for the same
+// field names) translates those codes into this same label vocabulary
+// before internal/slacondition ever evaluates them.
+type IncidentFacts struct {
+	// State is "" when the incident has no state recorded (should not
+	// happen in practice -- incident.state is NOT NULL -- but handled the
+	// same defensively-optional way CaseFacts.State is).
+	State string
+	// Priority is "" when the incident has no priority recorded.
+	Priority string
+	// Category is "" when the incident has no category recorded.
+	Category string
+	// ServiceID is the incident's own service_id verbatim (this database's
+	// dashed-UUID form, service.sysidToUUID(sys_id)) -- "" when the incident
+	// has no service. service.incidentConditionFacts converts this back to
+	// ServiceNow's raw, undashed sys_id form (service.uuidToSysid) when
+	// answering the "business_service" field, since sla_policy's own
+	// "business_service=" clauses embed that raw sys_id verbatim and are
+	// never translated (see translateIncidentSLACondition's own doc
+	// comment); internal/repository has no sys_id conversion helpers of its
+	// own and must not import internal/service (the dependency runs the
+	// other way), so the conversion happens at the adapter, not here.
+	ServiceID string
+	// CreatedOn answers "opened_at"/"sys_created_on", same meaning as
+	// CaseFacts.CreatedOn -- work_item.created_on.
+	CreatedOn time.Time
+}
+
 // SLAEngineRepository defines the read/write operations backing this
 // service's own in-process SLA engine (internal/service/sla_policy_resolver.go,
 // sla_engine_service.go). Every clock it writes is tagged source='CSM'
@@ -395,6 +438,11 @@ type SLAEngineRepository interface {
 	// that one field on the returned CaseFacts itself -- see
 	// slaEngineService's own call sites.
 	GetCaseFacts(ctx context.Context, workItemID string) (CaseFacts, error)
+
+	// GetIncidentFacts is GetCaseFacts' incident counterpart -- same
+	// freshness/override contract, over IncidentFacts instead of CaseFacts.
+	// Returns apierror.NotFoundError if no such work item exists.
+	GetIncidentFacts(ctx context.Context, workItemID string) (IncidentFacts, error)
 
 	// CancelClock marks every open (slaEngineOpenStageFilter) source='CSM'
 	// clock for (workItemID, target) CANCELLED, regardless of which policy
@@ -721,6 +769,28 @@ func (r *slaEngineRepo) GetCaseFacts(ctx context.Context, workItemID string) (Ca
 	}
 	if severity != nil {
 		facts.Severity = *severity
+	}
+	return facts, nil
+}
+
+// GetIncidentFacts implements SLAEngineRepository.
+func (r *slaEngineRepo) GetIncidentFacts(ctx context.Context, workItemID string) (IncidentFacts, error) {
+	const query = `
+		SELECT i.state::TEXT, COALESCE(i.priority::TEXT, ''), COALESCE(i.category::TEXT, ''),
+		       COALESCE(i.service_id::TEXT, ''), wi.created_on
+		FROM work_item wi
+		JOIN incident i ON i.id = wi.id
+		WHERE wi.id = $1`
+
+	var facts IncidentFacts
+	err := r.db.QueryRow(ctx, query, workItemID).Scan(
+		&facts.State, &facts.Priority, &facts.Category, &facts.ServiceID, &facts.CreatedOn,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return IncidentFacts{}, &apierror.NotFoundError{Msg: "work item not found: " + workItemID}
+	}
+	if err != nil {
+		return IncidentFacts{}, fmt.Errorf("get incident facts: %w", err)
 	}
 	return facts, nil
 }

@@ -38,6 +38,7 @@ import (
 type fakeFullSLAEngineRepo struct {
 	candidatesByTarget map[string][]repository.SLAPolicyRef
 	factsByCase        map[string]repository.CaseFacts
+	factsByIncident    map[string]repository.IncidentFacts
 	activeByCaseTarget map[string]repository.SLAPolicyRef
 
 	registered     []string // "caseID|policyID"
@@ -62,6 +63,7 @@ func newFakeFullSLAEngineRepo() *fakeFullSLAEngineRepo {
 	return &fakeFullSLAEngineRepo{
 		candidatesByTarget: map[string][]repository.SLAPolicyRef{},
 		factsByCase:        map[string]repository.CaseFacts{},
+		factsByIncident:    map[string]repository.IncidentFacts{},
 		activeByCaseTarget: map[string]repository.SLAPolicyRef{},
 		registerOK:         true,
 	}
@@ -83,6 +85,13 @@ func (r *fakeFullSLAEngineRepo) GetCaseFacts(_ context.Context, workItemID strin
 		return repository.CaseFacts{}, r.getCaseFactsErr
 	}
 	return r.factsByCase[workItemID], nil
+}
+
+func (r *fakeFullSLAEngineRepo) GetIncidentFacts(_ context.Context, workItemID string) (repository.IncidentFacts, error) {
+	if r.getCaseFactsErr != nil {
+		return repository.IncidentFacts{}, r.getCaseFactsErr
+	}
+	return r.factsByIncident[workItemID], nil
 }
 
 func (r *fakeFullSLAEngineRepo) RegisterClock(_ context.Context, workItemID string, policy repository.SLAPolicyRef, _ time.Time) (bool, error) {

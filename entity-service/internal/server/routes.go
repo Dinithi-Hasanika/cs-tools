@@ -1589,6 +1589,20 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		// (what the call-escalation ladders start from) and takes work notes, with no ServiceNow behind it.
 		activeIncidentSvc = service.NewIncidentServiceWithPublisher(incidentRepo, userRepo, incidentEventPublisher)
 	}
+	// This engine's own in-process SLA clock registration/revision/state
+	// effects, now also wired into incidents (previously case-only) -- see
+	// SLAEngineService.RegisterIncidentClocks' own doc comment. Same
+	// slaEngineSvc instance constructed above for cases (nil when
+	// CSM_SLA_ENGINE_ENABLED=false or no database, which
+	// WithIncidentSLAEngine tolerates); reaches every branch above
+	// (DataSourceServiceNow's *snIncidentService, the dual-write mirror's
+	// own *incidentService, and the plain-Postgres default's
+	// *incidentService) through this one decorator call, mirroring
+	// activeCaseSvc's identical WithSLAEngine wiring. Only one real
+	// sla_policy row currently matches anything for incidents -- see that
+	// doc comment for which one and why everything else is a safe no-op for
+	// now.
+	activeIncidentSvc = service.WithIncidentSLAEngine(activeIncidentSvc, slaEngineSvc)
 	// SLA_DATA_SOURCE=servicenow: SLA-filtered incident search/aggregate is
 	// answered by a read-only ServiceNow-backed incident service instead of the
 	// Postgres sla_live query, the same routing the case service gets via

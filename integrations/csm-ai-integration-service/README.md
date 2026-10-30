@@ -32,6 +32,14 @@ A bad value, a key without `CLAUDE_BASE_URL`, or a catalogue file that cannot be
 | `GET /health` | Liveness, always 200 |
 | `POST /ai/dashboards/generate` | One model call for a dashboard definition: returns the JSON objects the model wrote (see `CLAUDE.md`) |
 
+## Token usage
+
+Each model call logs one line, `dashboard generate: token usage`, with the portal user's id (`userID`, from
+the backend's `X-CSM-User-ID` header; never the email), `correlationID`, `model`, `outcome`, `inputTokens`,
+`outputTokens` and `durationMs` (the model call alone). It never holds the prompt or the reply. In Choreo it
+is in the component's logs; locally, `docker compose logs csm-ai-integration-service | grep "token usage"`.
+See `CLAUDE.md`.
+
 ## Developer guide
 
 ```bash

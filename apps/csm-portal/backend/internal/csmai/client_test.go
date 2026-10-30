@@ -39,9 +39,12 @@ type fakeService struct {
 	lastPath  atomic.Value
 	lastAuth  atomic.Value
 	lastCorr  atomic.Value
+	lastUser  atomic.Value
 	lastCType atomic.Value
 }
 
+// ServeHTTP answers the token endpoint itself; any other request is recorded
+// (path, auth, correlation id, user id, content type) and passed to handle.
 func (f *fakeService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/token" {
 		f.tokens.Add(1)
@@ -53,6 +56,7 @@ func (f *fakeService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.lastPath.Store(r.Method + " " + r.URL.Path)
 	f.lastAuth.Store(r.Header.Get("Authorization"))
 	f.lastCorr.Store(r.Header.Get("X-CSM-Correlation-ID"))
+	f.lastUser.Store(r.Header.Get("X-CSM-User-ID"))
 	f.lastCType.Store(r.Header.Get("Content-Type"))
 	f.handle(w, r, body)
 }
@@ -102,6 +106,31 @@ func TestGenerateDashboardSendsTheRequestAndReadsTheAnswer(t *testing.T) {
 	teams, _ := got["teams"].([]any)
 	if got["prompt"] != "Open cases" || got["draft"].(map[string]any)["displayName"] != "Old" || len(teams) != 1 {
 		t.Errorf("body = %v", got)
+	}
+}
+
+// TestGenerateDashboardSendsTheCallersUserIDNotTheirEmail: the request carries
+// the signed-in user's id, never their email, and no header at all when the
+// context has no user.
+func TestGenerateDashboardSendsTheCallersUserIDNotTheirEmail(t *testing.T) {
+	f := &fakeService{handle: func(w http.ResponseWriter, _ *http.Request, _ []byte) {
+		_, _ = io.WriteString(w, `{"candidates":[{"displayName":"A"}],"usage":{"inputTokens":1,"outputTokens":1}}`)
+	}}
+	c := newTestClient(t, f, 5*time.Second)
+
+	ctx := middleware.WithUserInfo(context.Background(), &middleware.UserInfo{Email: "someone@example.com", UserID: "user-42"})
+	if _, err := c.GenerateDashboard(ctx, DashboardRequest{Prompt: "Open cases"}); err != nil {
+		t.Fatalf("GenerateDashboard: %v", err)
+	}
+	if got := f.lastUser.Load(); got != "user-42" {
+		t.Errorf("user id header = %v, want user-42", got)
+	}
+
+	if _, err := c.GenerateDashboard(context.Background(), DashboardRequest{Prompt: "Open cases"}); err != nil {
+		t.Fatalf("GenerateDashboard without a user: %v", err)
+	}
+	if got := f.lastUser.Load(); got != "" {
+		t.Errorf("user id header without a user = %v, want none", got)
 	}
 }
 

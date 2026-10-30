@@ -30040,7 +30040,10 @@ components:
         name:
           type: string
         owner:
-          $ref: '#/components/schemas/UserReference'
+          allOf:
+            - $ref: '#/components/schemas/UserReference'
+          nullable: true
+          description: Who shared the dashboard (its owner); null once that user has been deleted.
         sharedViaTeam:
           allOf:
             - $ref: '#/components/schemas/CustomDashboardTeamShareTeam'
@@ -30074,7 +30077,10 @@ components:
           type: string
           description: The dashboard JSON as text (the owner's current version). Validated by the CSM portal backend; not parsed here.
         owner:
-          $ref: '#/components/schemas/UserReference'
+          allOf:
+            - $ref: '#/components/schemas/UserReference'
+          nullable: true
+          description: Who shared the dashboard (its owner); null once that user has been deleted.
         sharedViaTeam:
           allOf:
             - $ref: '#/components/schemas/CustomDashboardTeamShareTeam'

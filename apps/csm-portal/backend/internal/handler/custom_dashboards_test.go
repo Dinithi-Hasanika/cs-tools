@@ -716,9 +716,9 @@ func serveSharedRoute(client *fakeCustomDashboardClient, path string) *httptest.
 	return w
 }
 
-func janeOwner() entity.CustomDashboardPerson {
+func janeOwner() *entity.CustomDashboardPerson {
 	id := "00000000-0000-0000-0000-000000000001"
-	return entity.CustomDashboardPerson{ID: &id, Email: "jane.doe@example.com", Name: "Jane Doe"}
+	return &entity.CustomDashboardPerson{ID: &id, Email: "jane.doe@example.com", Name: "Jane Doe"}
 }
 
 func TestListSharedDashboards(t *testing.T) {
@@ -735,6 +735,25 @@ func TestListSharedDashboards(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "definition") {
 		t.Errorf("list carries a definition: %s", w.Body.String())
+	}
+}
+
+// A dashboard whose owner's user was deleted reaches the webapp with
+// "owner": null, in the list and the detail.
+func TestSharedDashboards_OwnerDeletedIsNull(t *testing.T) {
+	list := serveSharedRoute(&fakeCustomDashboardClient{sharedList: []entity.SharedCustomDashboardSummary{
+		{ID: testCustomDashboardID, Name: "Orphan", SharedOn: "a", UpdatedOn: "b"},
+	}}, "/dashboards/shared")
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"owner":null`) {
+		t.Errorf("list: status %d, body %s; want \"owner\":null", list.Code, list.Body.String())
+	}
+
+	_, draft := customDraft(t, testCustomDashboardID)
+	get := serveSharedRoute(&fakeCustomDashboardClient{shared: entity.SharedCustomDashboard{
+		ID: testCustomDashboardID, Name: "Orphan", Definition: storedDefinition(t, draft), SharedOn: "a", UpdatedOn: "b",
+	}}, "/dashboards/shared/"+testCustomDashboardID)
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"owner":null`) {
+		t.Errorf("get: status %d, body %s; want \"owner\":null", get.Code, get.Body.String())
 	}
 }
 

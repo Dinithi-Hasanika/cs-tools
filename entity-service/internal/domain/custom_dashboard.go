@@ -101,14 +101,15 @@ type CustomDashboardTeamShareList struct {
 
 // SharedCustomDashboardSummary is one dashboard another user shared with the
 // caller, as listed in GET /users/me/shared-dashboards: no definition. Owner
-// is who shared it (the dashboard's owner). SharedViaTeam is the caller's team
+// is who shared it (the dashboard's owner), nil once that user is deleted
+// (migration 0255). SharedViaTeam is the caller's team
 // it was shared with, nil when it was shared with the caller directly (a
 // direct share wins when there are both; with several teams, the first by
 // name). SharedOn is that share's date.
 type SharedCustomDashboardSummary struct {
 	ID            string                        `json:"id"`
 	Name          string                        `json:"name"`
-	Owner         UserReference                 `json:"owner"`
+	Owner         *UserReference                `json:"owner"`
 	SharedViaTeam *CustomDashboardTeamShareTeam `json:"sharedViaTeam"`
 	SharedOn      time.Time                     `json:"sharedOn"`
 	UpdatedOn     time.Time                     `json:"updatedOn"`
@@ -122,12 +123,12 @@ type SharedCustomDashboardList struct {
 // SharedCustomDashboard is one dashboard shared with the caller, with its
 // definition (GET /users/me/shared-dashboards/{id}): the owner's current
 // version, read only. Definition is opaque text, as in CustomDashboard.
-// SharedViaTeam as in SharedCustomDashboardSummary.
+// Owner and SharedViaTeam as in SharedCustomDashboardSummary.
 type SharedCustomDashboard struct {
 	ID            string                        `json:"id"`
 	Name          string                        `json:"name"`
 	Definition    string                        `json:"definition"`
-	Owner         UserReference                 `json:"owner"`
+	Owner         *UserReference                `json:"owner"`
 	SharedViaTeam *CustomDashboardTeamShareTeam `json:"sharedViaTeam"`
 	SharedOn      time.Time                     `json:"sharedOn"`
 	UpdatedOn     time.Time                     `json:"updatedOn"`

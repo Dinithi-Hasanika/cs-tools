@@ -156,8 +156,10 @@ func (r *customDashboardShareRepo) RemoveShare(ctx context.Context, ownerID, das
 // membership is read live from team_member: whoever is in the team now sees
 // the dashboard. A team share counts only when $1 is internal staff (person
 // shares check that when they are added; a team's members are not checked
-// then) and never for the dashboard's owner. With several shares of one
-// dashboard, the direct one wins, then the team first by name.
+// then) and never for the dashboard's owner. A dashboard whose owner was
+// deleted (owner_user_id NULL, migration 0255) still shows, with an empty
+// owner. With several shares of one dashboard, the direct one wins, then the
+// team first by name.
 const sharedWithUserFrom = `
 		 FROM (
 		   SELECT DISTINCT ON (g.dashboard_id) g.dashboard_id, g.created_on, g.team_id, g.team_name, g.team_type
@@ -174,8 +176,8 @@ const sharedWithUserFrom = `
 		   ) g
 		   ORDER BY g.dashboard_id, g.via, lower(g.team_name), g.created_on
 		 ) s
-		 JOIN custom_dashboard d ON d.id = s.dashboard_id AND d.owner_user_id <> $1::uuid
-		 JOIN "user" o ON o.id = d.owner_user_id
+		 JOIN custom_dashboard d ON d.id = s.dashboard_id AND d.owner_user_id IS DISTINCT FROM $1::uuid
+		 LEFT JOIN "user" o ON o.id = d.owner_user_id
 		 WHERE TRUE`
 
 // ListSharedWithUser is the dashboards shared with userID, directly or through
@@ -183,7 +185,7 @@ const sharedWithUserFrom = `
 // once, with the share that grants it (see sharedWithUserFrom).
 func (r *customDashboardShareRepo) ListSharedWithUser(ctx context.Context, userID string) ([]domain.SharedCustomDashboardSummary, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT d.id::text, d.name, o.id::text, COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on, `+sharedViaTeamColumns+
+		`SELECT d.id::text, d.name, COALESCE(o.id::text, ''), COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on, `+sharedViaTeamColumns+
 			sharedWithUserFrom+`
 		 ORDER BY lower(d.name), d.id`,
 		userID)
@@ -199,7 +201,7 @@ func (r *customDashboardShareRepo) ListSharedWithUser(ctx context.Context, userI
 		if err := rows.Scan(&d.ID, &d.Name, &ownerID, &ownerEmail, &ownerName, &d.SharedOn, &d.UpdatedOn, &teamID, &teamName, &teamType); err != nil {
 			return nil, fmt.Errorf("list dashboards shared with user: scan: %w", err)
 		}
-		d.Owner = dashboardShareUserRef(ownerID, ownerEmail, ownerName)
+		d.Owner = domain.NewUserReference(ownerID, ownerEmail, ownerName)
 		d.SharedViaTeam = sharedViaTeam(teamID, teamName, teamType)
 		out = append(out, d)
 	}
@@ -216,7 +218,7 @@ func (r *customDashboardShareRepo) GetSharedWithUser(ctx context.Context, userID
 	var teamID, teamName, teamType *string
 	var d domain.SharedCustomDashboard
 	err := r.db.QueryRow(ctx,
-		`SELECT d.id::text, d.name, d.definition, o.id::text, COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on, `+sharedViaTeamColumns+
+		`SELECT d.id::text, d.name, d.definition, COALESCE(o.id::text, ''), COALESCE(o.email, ''), `+fmt.Sprintf(dashboardShareUserName, "o")+`, s.created_on, d.updated_on, `+sharedViaTeamColumns+
 			sharedWithUserFrom+`
 		   AND d.id = $2::uuid`,
 		userID, dashboardID).Scan(&d.ID, &d.Name, &d.Definition, &ownerID, &ownerEmail, &ownerName, &d.SharedOn, &d.UpdatedOn, &teamID, &teamName, &teamType)
@@ -226,7 +228,7 @@ func (r *customDashboardShareRepo) GetSharedWithUser(ctx context.Context, userID
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard shared with user: %w", err)
 	}
-	d.Owner = dashboardShareUserRef(ownerID, ownerEmail, ownerName)
+	d.Owner = domain.NewUserReference(ownerID, ownerEmail, ownerName)
 	d.SharedViaTeam = sharedViaTeam(teamID, teamName, teamType)
 	return &d, nil
 }

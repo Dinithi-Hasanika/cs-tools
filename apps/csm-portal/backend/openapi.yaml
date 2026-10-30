@@ -18461,7 +18461,10 @@ components:
         name:
           type: string
         owner:
-          $ref: '#/components/schemas/CustomDashboardPerson'
+          allOf:
+            - $ref: '#/components/schemas/CustomDashboardPerson'
+          nullable: true
+          description: Who shared the dashboard (its owner); null once that user has been deleted.
         sharedViaTeam:
           $ref: '#/components/schemas/SharedViaTeam'
         sharedOn:
@@ -18492,7 +18495,10 @@ components:
         dashboard:
           $ref: '#/components/schemas/Dashboard'
         owner:
-          $ref: '#/components/schemas/CustomDashboardPerson'
+          allOf:
+            - $ref: '#/components/schemas/CustomDashboardPerson'
+          nullable: true
+          description: Who shared the dashboard (its owner); null once that user has been deleted.
         sharedViaTeam:
           $ref: '#/components/schemas/SharedViaTeam'
         sharedOn:

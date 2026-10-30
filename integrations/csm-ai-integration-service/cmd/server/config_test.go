@@ -89,7 +89,8 @@ func TestLoadConfigNeedsTheGatewayWithAKey(t *testing.T) {
 }
 
 // TestLoadConfigRejectsBadValues checks that a bad timeout or gateway URL, or
-// the old CATALOGUE_FILE, is an error that never mentions the key.
+// the old CATALOGUE_FILE without CATALOGUE_DIR, is an error that never
+// mentions the key.
 func TestLoadConfigRejectsBadValues(t *testing.T) {
 	for name, vars := range map[string]map[string]string{
 		"timeout not a duration": {"CLAUDE_TIMEOUT": "soon"},
@@ -114,6 +115,25 @@ func TestLoadConfigNamesCatalogueDirForTheOldFile(t *testing.T) {
 	_, err := loadConfig(env(map[string]string{"CATALOGUE_FILE": "/mnt/catalogue.md"}))
 	if err == nil || !strings.Contains(err.Error(), "CATALOGUE_DIR") {
 		t.Errorf("err = %v, want one naming CATALOGUE_DIR", err)
+	}
+}
+
+// TestLoadConfigIgnoresTheOldFileNextToCatalogueDir checks that CATALOGUE_FILE
+// left set next to CATALOGUE_DIR does not fail the start, and is flagged for
+// the startup warning.
+func TestLoadConfigIgnoresTheOldFileNextToCatalogueDir(t *testing.T) {
+	cfg, err := loadConfig(env(map[string]string{
+		"CATALOGUE_FILE": "/mnt/catalogue.md",
+		"CATALOGUE_DIR":  "/mnt/catalogue",
+	}))
+	if err != nil {
+		t.Fatalf("err = %v, want none", err)
+	}
+	if cfg.CatalogueDir != "/mnt/catalogue" || !cfg.OldCatalogueFile {
+		t.Errorf("CatalogueDir = %q, OldCatalogueFile = %v, want /mnt/catalogue and true", cfg.CatalogueDir, cfg.OldCatalogueFile)
+	}
+	if cfg, _ := loadConfig(env(map[string]string{"CATALOGUE_DIR": "/mnt/catalogue"})); cfg.OldCatalogueFile {
+		t.Error("OldCatalogueFile = true without CATALOGUE_FILE")
 	}
 }
 

@@ -126,8 +126,8 @@ an empty or unreadable part each fail the start, so a mistyped path shows there.
 with no file access, so an edited mount applies on the next start (in Choreo, changing a mount restarts the
 pod anyway). The startup log line `model calls` names the origin (`catalogue`: `built-in` or the directory)
 and the parts in the order they were joined (`catalogueParts`). `CATALOGUE_FILE`, the single file this
-replaced, is a start error rather than ignored, so a deployment still setting it does not quietly fall back
-to the built-in copy. Keep the built-in copy current: it is what local runs and tests use, and what a
+replaced, is a start error when `CATALOGUE_DIR` is unset, so a deployment still setting only it does not
+quietly fall back to the built-in copy; next to `CATALOGUE_DIR` it is ignored, with a warning at start. Keep the built-in copy current: it is what local runs and tests use, and what a
 deployment without the mount gets.
 
 **Editing `catalogue.md` can break a backend test, by design.** The backend's

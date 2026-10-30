@@ -41,13 +41,15 @@ const (
 //
 // CatalogueDir, when set, is a directory of catalogue parts that replaces the
 // catalogue built into the binary (see package catalogue); in Choreo, one file
-// mount per part.
+// mount per part. OldCatalogueFile is set when CATALOGUE_FILE is still set
+// next to CATALOGUE_DIR, so the start can warn that it is ignored.
 type config struct {
-	APIKey       string
-	Model        string
-	Timeout      time.Duration
-	BaseURL      string
-	CatalogueDir string
+	APIKey           string
+	Model            string
+	Timeout          time.Duration
+	BaseURL          string
+	CatalogueDir     string
+	OldCatalogueFile bool
 }
 
 // GatewayHost is the host model calls go to, for the startup log line:
@@ -72,8 +74,9 @@ func (c config) Enabled() bool { return c.APIKey != "" }
 // defaultClaudeTimeout, must be > 0), CLAUDE_BASE_URL (an absolute http or
 // https URL; required when ANTHROPIC_API_KEY is set) and CATALOGUE_DIR
 // (optional). CATALOGUE_FILE, the single catalogue file it replaced, is an
-// error rather than ignored, so a deployment still setting it does not quietly
-// fall back to the built-in catalogue.
+// error when CATALOGUE_DIR is unset, so a deployment still setting only it does
+// not quietly fall back to the built-in catalogue; next to CATALOGUE_DIR it is
+// ignored.
 // Values are trimmed, so a key pasted with a trailing newline still works.
 // Pure, so tests pass their own getenv.
 func loadConfig(getenv func(string) string) (config, error) {
@@ -99,7 +102,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if apiKey != "" && baseURL == "" {
 		return config{}, fmt.Errorf("CLAUDE_BASE_URL is required when ANTHROPIC_API_KEY is set: the URL of the CSM AI gateway the key belongs to")
 	}
-	if strings.TrimSpace(getenv("CATALOGUE_FILE")) != "" {
+	catalogueDir := strings.TrimSpace(getenv("CATALOGUE_DIR"))
+	oldCatalogueFile := strings.TrimSpace(getenv("CATALOGUE_FILE")) != ""
+	if oldCatalogueFile && catalogueDir == "" {
 		return config{}, fmt.Errorf("CATALOGUE_FILE is no longer read: mount the catalogue's parts in one directory and set CATALOGUE_DIR to it")
 	}
 	model := strings.TrimSpace(getenv("CLAUDE_MODEL"))
@@ -107,10 +112,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 		model = defaultClaudeModel
 	}
 	return config{
-		APIKey:       apiKey,
-		Model:        model,
-		Timeout:      timeout,
-		BaseURL:      baseURL,
-		CatalogueDir: strings.TrimSpace(getenv("CATALOGUE_DIR")),
+		APIKey:           apiKey,
+		Model:            model,
+		Timeout:          timeout,
+		BaseURL:          baseURL,
+		CatalogueDir:     catalogueDir,
+		OldCatalogueFile: oldCatalogueFile,
 	}, nil
 }

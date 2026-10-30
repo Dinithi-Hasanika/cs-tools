@@ -55,6 +55,9 @@ func main() {
 		slog.Error("dashboard catalogue", "err", err)
 		os.Exit(1)
 	}
+	if cfg.OldCatalogueFile {
+		slog.Warn("dashboard catalogue: CATALOGUE_FILE is ignored, the parts in CATALOGUE_DIR are used; remove it")
+	}
 	// Never the key. The parts are listed in the order they were joined, so
 	// the order can be checked in the log.
 	slog.Info("model calls", "enabled", cfg.Enabled(), "model", cfg.Model, "timeout", cfg.Timeout,

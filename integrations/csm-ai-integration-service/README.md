@@ -24,7 +24,8 @@ See `CLAUDE.md` for what lives here and what stays in the backend.
 | `CATALOGUE_DIR` | built-in | A directory of catalogue parts replacing the built-in dashboard catalogue: its `*.md` files, joined in name order (Choreo file mounts, see below). Read once at start: restart to apply a change |
 
 A bad value, a key without `CLAUDE_BASE_URL`, a catalogue directory that cannot be read, has no `*.md` file
-or has an empty one, or the old `CATALOGUE_FILE` still set, fails the start.
+or has an empty one, or the old `CATALOGUE_FILE` set without `CATALOGUE_DIR`, fails the start. Left set next
+to `CATALOGUE_DIR`, `CATALOGUE_FILE` is ignored, with a warning at start: remove it.
 
 ## Mounting the catalogue in Choreo
 

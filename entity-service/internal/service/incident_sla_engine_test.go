@@ -261,6 +261,91 @@ func TestIncidentService_UpdateIncident_NotesOnlyDoesNotReviseSLAClocks(t *testi
 	}
 }
 
+// TestIncidentService_UpdateIncident_ServiceIDOnlyChangeRevisesSLAClocks is
+// the regression test for a second real gap a review caught alongside the
+// notes-only one above: ReviseIncidentClocks used to run only on a genuine
+// PRIORITY change, but the real "Cloud Incident - High Priority" policy's
+// own start_condition also matches on business_service -- a ServiceID-only
+// PATCH (priority unchanged) could move an incident onto, or off of, the
+// Choreo/Asgardeo scope that policy requires, and the engine never
+// re-resolved for it.
+func TestIncidentService_UpdateIncident_ServiceIDOnlyChangeRevisesSLAClocks(t *testing.T) {
+	priority := "CRITICAL"
+	beforeService := &domain.EntityRef{ID: "11111111-1111-1111-1111-111111111111", Name: "Service A"}
+	afterService := &domain.EntityRef{ID: "22222222-2222-2222-2222-222222222222", Name: "Service B"}
+	calls := 0
+	repo := &stubIncidentRepo{
+		updateIncidentLifecycle: func(context.Context, string, repository.IncidentLifecycleUpdate, string) error { return nil },
+		getIncidentByID: func(_ context.Context, id string) (domain.IncidentView, error) {
+			calls++
+			svc := beforeService
+			if calls > 1 {
+				svc = afterService
+			}
+			return domain.IncidentView{ID: &id, Priority: &priority, Service: svc}, nil
+		},
+	}
+	slaEngine := &fakeSLAEngineService{}
+	svc := WithIncidentSLAEngine(
+		NewIncidentServiceWithSNMirror(repo, stubUpdateIncidentUserRepo{email: "jane.doe@example.com"}, &stubMirrorIncidentService{
+			updateIncident: func(context.Context, domain.UpdateIncidentRequest) (domain.UpdateIncidentResponse, error) {
+				return domain.UpdateIncidentResponse{}, nil
+			},
+		}, nil, NewSNWritebackDispatcher(&recordingSNWritebackFailures{})),
+		slaEngine,
+	)
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	newServiceID := afterService.ID
+	if _, err := svc.UpdateIncident(ctx, domain.UpdateIncidentRequest{ID: testDeploymentUUID, ServiceID: &newServiceID}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(slaEngine.reviseIncidentCalls) != 1 || slaEngine.reviseIncidentCalls[0].incidentID != testDeploymentUUID {
+		t.Fatalf("reviseIncidentCalls = %v, want exactly one for incident %q: a ServiceID-only change must revise SLA clocks", slaEngine.reviseIncidentCalls, testDeploymentUUID)
+	}
+}
+
+// TestIncidentService_UpdateIncident_CategoryOnlyChangeRevisesSLAClocks is
+// CategoryOnlyChangeRevisesSLAClocks' sibling for the policy's other
+// matched field, category.
+func TestIncidentService_UpdateIncident_CategoryOnlyChangeRevisesSLAClocks(t *testing.T) {
+	priority := "CRITICAL"
+	beforeCategory := "INQUIRY"
+	afterCategory := "SERVICE_INTERRUPTION"
+	calls := 0
+	repo := &stubIncidentRepo{
+		updateIncidentLifecycle: func(context.Context, string, repository.IncidentLifecycleUpdate, string) error { return nil },
+		getIncidentByID: func(_ context.Context, id string) (domain.IncidentView, error) {
+			calls++
+			cat := beforeCategory
+			if calls > 1 {
+				cat = afterCategory
+			}
+			return domain.IncidentView{ID: &id, Priority: &priority, Category: &cat}, nil
+		},
+	}
+	slaEngine := &fakeSLAEngineService{}
+	svc := WithIncidentSLAEngine(
+		NewIncidentServiceWithSNMirror(repo, stubUpdateIncidentUserRepo{email: "jane.doe@example.com"}, &stubMirrorIncidentService{
+			updateIncident: func(context.Context, domain.UpdateIncidentRequest) (domain.UpdateIncidentResponse, error) {
+				return domain.UpdateIncidentResponse{}, nil
+			},
+		}, nil, NewSNWritebackDispatcher(&recordingSNWritebackFailures{})),
+		slaEngine,
+	)
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	newCategory := domain.IncidentCategoryServiceInterruption
+	if _, err := svc.UpdateIncident(ctx, domain.UpdateIncidentRequest{ID: testDeploymentUUID, Category: &newCategory}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(slaEngine.reviseIncidentCalls) != 1 || slaEngine.reviseIncidentCalls[0].incidentID != testDeploymentUUID {
+		t.Fatalf("reviseIncidentCalls = %v, want exactly one for incident %q: a Category-only change must revise SLA clocks", slaEngine.reviseIncidentCalls, testDeploymentUUID)
+	}
+}
+
 // TestSNIncidentService_UpdateIncident_NonEscalationUpdateDoesNotReviseSLAClocks
 // is sn_incident_service.go's own counterpart to the notes-only regression
 // above: its pre-PATCH baseline is only fetched when
@@ -296,5 +381,53 @@ func TestSNIncidentService_UpdateIncident_NonEscalationUpdateDoesNotReviseSLAClo
 
 	if len(slaEngine.reviseIncidentCalls) != 0 {
 		t.Errorf("reviseIncidentCalls = %v, want none: a non-escalation update must never revise SLA clocks", slaEngine.reviseIncidentCalls)
+	}
+}
+
+// TestSNIncidentService_UpdateIncident_ServiceIDOnlyChangeRevisesSLAClocks is
+// sn_incident_service.go's own counterpart to
+// TestIncidentService_UpdateIncident_ServiceIDOnlyChangeRevisesSLAClocks:
+// incidentUpdateTouchesEscalation(req) alone used to gate BOTH the baseline
+// fetch and the revision itself, and that function has no idea about
+// ServiceID/Category -- so a ServiceID-only PATCH never even fetched a
+// baseline, let alone revised the clock.
+func TestSNIncidentService_UpdateIncident_ServiceIDOnlyChangeRevisesSLAClocks(t *testing.T) {
+	const newServiceSysid = "22222222222222222222222222222222"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/incidents/"+testIncidentSysid, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{
+				"id": "` + testIncidentSysid + `", "number": "INC0001",
+				"createdOn": "2026-01-01 00:00:00", "createdBy": "engineer@example.com",
+				"priority": {"id": 1, "label": "Critical"},
+				"service": {"id": "11111111111111111111111111111111", "name": "Service A"}
+			}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"message": "Incident updated successfully.",
+			"incident": {
+				"id": "` + testIncidentSysid + `", "number": "INC0001",
+				"createdOn": "2026-01-01 00:00:00", "createdBy": "engineer@example.com",
+				"priority": {"id": 1, "label": "Critical"},
+				"service": {"id": "` + newServiceSysid + `", "name": "Service B"}
+			}
+		}`))
+	})
+
+	slaEngine := &fakeSLAEngineService{}
+	svc := WithIncidentSLAEngine(NewServiceNowIncidentService(newTestSNClient(t, mux), nil), slaEngine)
+
+	newServiceID := sysidToUUID(newServiceSysid)
+	if _, err := svc.UpdateIncident(contextWithUserIDToken("token"), domain.UpdateIncidentRequest{
+		ID:        testIncidentUUID,
+		ServiceID: &newServiceID,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(slaEngine.reviseIncidentCalls) != 1 || slaEngine.reviseIncidentCalls[0].incidentID != testIncidentUUID {
+		t.Fatalf("reviseIncidentCalls = %v, want exactly one for incident %q: a ServiceID-only change must revise SLA clocks", slaEngine.reviseIncidentCalls, testIncidentUUID)
 	}
 }

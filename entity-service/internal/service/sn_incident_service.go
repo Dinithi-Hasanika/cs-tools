@@ -1721,12 +1721,23 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 	// urgency therefore raises the priority just as surely as one naming it,
 	// and gating on req.Priority alone meant that update published nothing
 	// and no ladder ever started.
+	// Two independent reasons to pay for this fetch: s.publisher only ever
+	// needs it for escalation-relevant fields (incidentUpdateTouchesEscalation);
+	// s.slaEngine needs it for a wider set -- incidentUpdateTouchesResolutionFacts
+	// also covers ServiceID/Category, which the real "Cloud Incident - High
+	// Priority" policy's own start_condition matches on (business_service/
+	// category) but which never start or stop a call escalation on their
+	// own. Without the OR here, a ServiceID- or Category-only PATCH would
+	// never fetch a baseline at all, leaving ReviseIncidentClocks unable to
+	// tell whether the policy newly applies or newly stopped applying -- a
+	// real gap a review caught.
 	var before domain.IncidentView
-	if (s.publisher != nil || s.slaEngine != nil) && incidentUpdateTouchesEscalation(req) {
+	if (s.publisher != nil && incidentUpdateTouchesEscalation(req)) ||
+		(s.slaEngine != nil && incidentUpdateTouchesResolutionFacts(req)) {
 		if fetched, ferr := s.GetIncidentByID(ctx, req.ID); ferr == nil {
 			before = fetched
 		} else {
-			slog.WarnContext(ctx, "sn update incident: escalation baseline fetch failed; skipping escalation signals",
+			slog.WarnContext(ctx, "sn update incident: pre-PATCH baseline fetch failed; skipping escalation signals and SLA revision",
 				"incidentId", req.ID)
 		}
 	}
@@ -1747,21 +1758,22 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 	// incidentService.UpdateIncident's own identically-reasoned call site
 	// for why, and why it runs before publishEscalationSignals below rather
 	// than after. before is zero-valued when the pre-PATCH fetch above was
-	// skipped (incidentUpdateTouchesEscalation(req) was false) or failed --
-	// requiring before.ID != nil (the same "no baseline" convention
-	// publishEscalationSignals' own guard just below uses) AND
-	// incidentUpdateTouchesPriority(req) is what keeps a notes-only update,
-	// or one whose baseline fetch simply failed, from reading a zero-valued
-	// before.Priority as "changed" and spuriously cancelling/restarting a
-	// live RESOLUTION clock -- a real bug a review caught: without this
-	// gate, a failed fetch on a request that genuinely could have changed
-	// priority still reset the clock every time.
+	// skipped (neither s.publisher's nor s.slaEngine's own trigger applied)
+	// or failed -- requiring before.ID != nil (the same "no baseline"
+	// convention publishEscalationSignals' own guard just below uses) AND
+	// incidentUpdateTouchesResolutionFacts(req) (not priority alone -- the
+	// real "Cloud Incident - High Priority" policy's own start_condition
+	// also matches on business_service/category, a gap a review caught; see
+	// that function's own doc comment) is what keeps a notes-only update, or
+	// one whose baseline fetch simply failed, from reading a zero-valued
+	// before against view's real values as "changed" and spuriously
+	// cancelling/restarting a live RESOLUTION clock.
 	if s.slaEngine != nil {
 		if req.State != nil {
 			s.slaEngine.ApplyIncidentStateEffects(ctx, req.ID, *req.State)
 		}
-		if before.ID != nil && incidentUpdateTouchesPriority(req) &&
-			incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
+		if before.ID != nil && incidentUpdateTouchesResolutionFacts(req) &&
+			incidentResolutionFactsChanged(before, view) && view.Priority != nil {
 			p := domain.IncidentPriority(*view.Priority)
 			s.slaEngine.ReviseIncidentClocks(ctx, req.ID, &p)
 		}

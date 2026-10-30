@@ -919,6 +919,46 @@ func incidentPriorityOf(v domain.IncidentView) string {
 	return *v.Priority
 }
 
+// incidentServiceIDOf/incidentCategoryOf are incidentPriorityOf's siblings
+// for the other two fields the real "Cloud Incident - High Priority" sla_policy
+// row's own start_condition matches on (business_service/category) -- a
+// genuine review-caught gap: ReviseIncidentClocks used to run only on a
+// priority change, so a ServiceID- or Category-only PATCH (both real,
+// independently-settable UpdateIncidentRequest fields) could leave an
+// obsolete clock running, or fail to pick up a newly-applicable one, until
+// some unrelated later priority/state change happened to trigger a
+// re-resolution.
+func incidentServiceIDOf(v domain.IncidentView) string {
+	if v.Service == nil {
+		return ""
+	}
+	return v.Service.ID
+}
+
+func incidentCategoryOf(v domain.IncidentView) string {
+	if v.Category == nil {
+		return ""
+	}
+	return *v.Category
+}
+
+// incidentResolutionFactsChanged reports whether before vs. after differ on
+// any field this engine's incident-policy resolution depends on today --
+// priority, business_service (ServiceID), or category. Used to decide
+// whether ReviseIncidentClocks needs to run at all.
+func incidentResolutionFactsChanged(before, after domain.IncidentView) bool {
+	return incidentPriorityOf(before) != incidentPriorityOf(after) ||
+		incidentServiceIDOf(before) != incidentServiceIDOf(after) ||
+		incidentCategoryOf(before) != incidentCategoryOf(after)
+}
+
+// incidentUpdateTouchesResolutionFacts reports whether req could change any
+// of the fields incidentResolutionFactsChanged compares -- incidentUpdateTouchesPriority's
+// own set (Priority/Impact/Urgency) plus ServiceID/Category.
+func incidentUpdateTouchesResolutionFacts(req domain.UpdateIncidentRequest) bool {
+	return incidentUpdateTouchesPriority(req) || req.ServiceID != nil || req.Category != nil
+}
+
 // incidentPriorityFor is ServiceNow's incident priority lookup (dl_u_priority)
 // -- see priorityFromImpactUrgency. The create form's preview (webapp
 // utils/incidentPriorityMatrix.ts) shows the same matrix.
@@ -1154,22 +1194,28 @@ func (s *incidentService) UpdateIncident(ctx context.Context, req domain.UpdateI
 	// re-reading this engine's current clocks must never observe the OLD
 	// ones. req.State != nil alone gates ApplyIncidentStateEffects (every
 	// effect it applies is idempotent, so a caller re-PATCHing the
-	// incident's own current state just harmlessly re-applies it); priority
-	// revision requires BOTH beforeRead (a notes-only update, or a failed
-	// pre-fetch, never populates `before` at all -- comparing a zero-valued
-	// before.Priority against view's real one would read as "changed" on
-	// every single such update, cancelling and restarting a live RESOLUTION
-	// clock for nothing more than a work note -- a real bug a review
-	// caught) and incidentUpdateTouchesPriority(req) (the request must be
-	// able to change priority at all), on top of the GENUINE-change
-	// comparison itself -- the same "only on real change" gate
-	// ReviseCaseClocks' own call site uses.
+	// incident's own current state just harmlessly re-applies it); revision
+	// requires BOTH beforeRead (a notes-only update, or a failed pre-fetch,
+	// never populates `before` at all -- comparing a zero-valued before
+	// against view's real values would read as "changed" on every single
+	// such update, cancelling and restarting a live RESOLUTION clock for
+	// nothing more than a work note -- a real bug a review caught) and
+	// incidentUpdateTouchesResolutionFacts(req) (the request must be able to
+	// change priority, ServiceID, or Category at all -- not priority alone:
+	// the real "Cloud Incident - High Priority" policy's own start_condition
+	// also matches on business_service/category, a second gap the same
+	// review caught -- hasRecord already fetches `before` for a
+	// ServiceID/Category-only PATCH, same as it does for Priority/Impact/
+	// Urgency, so no new baseline fetch is needed here), on top of the
+	// GENUINE-change comparison itself (incidentResolutionFactsChanged) --
+	// the same "only on real change" gate ReviseCaseClocks' own call site
+	// uses.
 	if s.slaEngine != nil {
 		if req.State != nil {
 			s.slaEngine.ApplyIncidentStateEffects(ctx, req.ID, *req.State)
 		}
-		if beforeRead && incidentUpdateTouchesPriority(req) &&
-			incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
+		if beforeRead && incidentUpdateTouchesResolutionFacts(req) &&
+			incidentResolutionFactsChanged(before, view) && view.Priority != nil {
 			p := domain.IncidentPriority(*view.Priority)
 			s.slaEngine.ReviseIncidentClocks(ctx, req.ID, &p)
 		}

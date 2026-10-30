@@ -30,6 +30,8 @@ func TestBuiltInCatalogue(t *testing.T) {
 	}
 }
 
+// TestNoFileIsTheBuiltInCopy checks that an empty or blank file setting uses
+// the built-in catalogue.
 func TestNoFileIsTheBuiltInCopy(t *testing.T) {
 	for _, file := range []string{"", "   "} {
 		d, err := NewDashboard(file)
@@ -45,6 +47,8 @@ func TestNoFileIsTheBuiltInCopy(t *testing.T) {
 	}
 }
 
+// TestAMountedFileOverridesAndIsReadOnceAtStart checks that a mounted file
+// replaces the built-in catalogue and that an edit after start is not seen.
 func TestAMountedFileOverridesAndIsReadOnceAtStart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalogue.md")
 	write(t, path, "first version")
@@ -78,6 +82,8 @@ func TestAMissingOrEmptyFileFailsTheStart(t *testing.T) {
 	}
 }
 
+// TestAFileRemovedAfterStartKeepsTheTextReadAtStart checks that removing the
+// mounted file after start keeps its text, not the built-in copy.
 func TestAFileRemovedAfterStartKeepsTheTextReadAtStart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalogue.md")
 	write(t, path, "mounted copy")

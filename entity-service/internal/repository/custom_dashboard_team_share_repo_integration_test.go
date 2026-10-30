@@ -319,6 +319,10 @@ const (
 	cdbDashboardUnshared = "cdb00000-0000-4000-8000-0000000000d3"
 )
 
+// TestCustomDashboardIntegration_DeletingTheOwnerKeepsOnlySharedDashboards
+// deletes an owner with a dashboard shared with a person, one shared with a
+// team and one shared with nobody (migration 0255): only the shared two stay,
+// with no owner, still visible to their recipients, and nobody can change them.
 func TestCustomDashboardIntegration_DeletingTheOwnerKeepsOnlySharedDashboards(t *testing.T) {
 	f := newTeamShareFixture(t)
 	ids := []string{cdbDashboardPersonD, cdbDashboardTeamD, cdbDashboardUnshared}

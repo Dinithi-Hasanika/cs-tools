@@ -1747,16 +1747,21 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 	// incidentService.UpdateIncident's own identically-reasoned call site
 	// for why, and why it runs before publishEscalationSignals below rather
 	// than after. before is zero-valued when the pre-PATCH fetch above was
-	// skipped (incidentUpdateTouchesEscalation(req) was false, so neither
-	// state nor priority could have changed) or failed -- in the failure
-	// case this degrades to possibly-spurious revise/apply calls, the same
-	// accepted best-effort posture publishEscalationSignals already has for
-	// its own before.ID == nil guard.
+	// skipped (incidentUpdateTouchesEscalation(req) was false) or failed --
+	// requiring before.ID != nil (the same "no baseline" convention
+	// publishEscalationSignals' own guard just below uses) AND
+	// incidentUpdateTouchesPriority(req) is what keeps a notes-only update,
+	// or one whose baseline fetch simply failed, from reading a zero-valued
+	// before.Priority as "changed" and spuriously cancelling/restarting a
+	// live RESOLUTION clock -- a real bug a review caught: without this
+	// gate, a failed fetch on a request that genuinely could have changed
+	// priority still reset the clock every time.
 	if s.slaEngine != nil {
 		if req.State != nil {
 			s.slaEngine.ApplyIncidentStateEffects(ctx, req.ID, *req.State)
 		}
-		if incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
+		if before.ID != nil && incidentUpdateTouchesPriority(req) &&
+			incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
 			p := domain.IncidentPriority(*view.Priority)
 			s.slaEngine.ReviseIncidentClocks(ctx, req.ID, &p)
 		}

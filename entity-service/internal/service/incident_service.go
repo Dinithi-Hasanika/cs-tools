@@ -1115,9 +1115,10 @@ func (s *incidentService) UpdateIncident(ctx context.Context, req domain.UpdateI
 	// or a move out of NEW is told apart from a re-send of what it already had
 	// (publishIncidentStopSignals). Read whenever the request changes a field; notes alone need it not.
 	var before domain.IncidentView
+	var beforeRead bool
 	if hasLifecycle || hasRecord {
 		if b, err := s.repo.GetIncidentByID(ctx, req.ID); err == nil {
-			before = b
+			before, beforeRead = b, true
 		} else {
 			slog.WarnContext(ctx, "update incident: could not read the incident before the change; no stop signal or activity entry will be written",
 				"incidentId", req.ID, "error", err)
@@ -1154,14 +1155,21 @@ func (s *incidentService) UpdateIncident(ctx context.Context, req domain.UpdateI
 	// ones. req.State != nil alone gates ApplyIncidentStateEffects (every
 	// effect it applies is idempotent, so a caller re-PATCHing the
 	// incident's own current state just harmlessly re-applies it); priority
-	// revision is gated on a GENUINE change (including one driven by an
-	// Impact/Urgency PATCH, not only an explicit Priority field), the same
-	// "only on real change" gate ReviseCaseClocks' own call site uses.
+	// revision requires BOTH beforeRead (a notes-only update, or a failed
+	// pre-fetch, never populates `before` at all -- comparing a zero-valued
+	// before.Priority against view's real one would read as "changed" on
+	// every single such update, cancelling and restarting a live RESOLUTION
+	// clock for nothing more than a work note -- a real bug a review
+	// caught) and incidentUpdateTouchesPriority(req) (the request must be
+	// able to change priority at all), on top of the GENUINE-change
+	// comparison itself -- the same "only on real change" gate
+	// ReviseCaseClocks' own call site uses.
 	if s.slaEngine != nil {
 		if req.State != nil {
 			s.slaEngine.ApplyIncidentStateEffects(ctx, req.ID, *req.State)
 		}
-		if incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
+		if beforeRead && incidentUpdateTouchesPriority(req) &&
+			incidentPriorityOf(before) != incidentPriorityOf(view) && view.Priority != nil {
 			p := domain.IncidentPriority(*view.Priority)
 			s.slaEngine.ReviseIncidentClocks(ctx, req.ID, &p)
 		}

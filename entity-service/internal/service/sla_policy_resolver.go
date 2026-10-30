@@ -176,19 +176,35 @@ var slaPolicyIncidentFieldMarkers = []string{
 	"business_service",
 }
 
+// slaPolicyIncidentSkipFieldMarkers names condition fields confirmed to
+// appear only on an account-escalation (never incident, never case)
+// sla_policy row -- the subset of slaPolicySkipFieldMarkers that is NOT
+// "business_service"/"category=": those two ARE legitimate incident-policy
+// fields (the one real incident policy carries both), so slaPolicySkipFieldMarkers
+// cannot be reused wholesale here the way an earlier revision's doc comment
+// incorrectly claimed -- doing so would exclude every real incident policy
+// outright. A row carrying "business_service" alongside one of these,
+// though not confirmed in the real table today, is an escalation row that
+// happens to also reference a service, not a genuine incident policy this
+// engine should evaluate.
+var slaPolicyIncidentSkipFieldMarkers = []string{
+	"escalation_severity",
+	"source_table",
+	"active_escalation",
+}
+
 // isIncidentPolicy decides whether an sla_policy row's conditions describe
 // an incident, the same strict-inclusion shape as isCasePolicy: it must
 // carry at least one slaPolicyIncidentFieldMarkers token and none of
-// slaPolicySkipFieldMarkers' OTHER (non-incident) entries. Deliberately
-// reuses slaPolicySkipFieldMarkers wholesale rather than a separate list:
-// every marker there (category=/escalation_severity/source_table/
-// active_escalation, besides business_service itself) is either genuinely
-// incident-adjacent or at minimum never appears on a real case policy
-// either, so excluding on the same set costs nothing and keeps the two
-// classifiers from silently drifting apart.
+// slaPolicyCaseFieldMarkers or slaPolicyIncidentSkipFieldMarkers.
 func isIncidentPolicy(conditions ...string) bool {
 	all := strings.Join(conditions, "^")
 	for _, marker := range slaPolicyCaseFieldMarkers {
+		if strings.Contains(all, marker) {
+			return false
+		}
+	}
+	for _, marker := range slaPolicyIncidentSkipFieldMarkers {
 		if strings.Contains(all, marker) {
 			return false
 		}

@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -191,5 +192,109 @@ func TestSLAEngineService_ApplyIncidentStateEffects_StateDBLabelNormalizesCancel
 	if len(repo.clockCancelled) != 1 || repo.clockCancelled[0] != want {
 		t.Fatalf("clockCancelled = %v, want [%s]: domain.IncidentStateCancelled must normalize to the real \"CANCELED\" (one L) enum label",
 			repo.clockCancelled, want)
+	}
+}
+
+// TestIsIncidentPolicy_EscalationMarkerAlongsideBusinessServiceIsExcluded is
+// the regression test for a real classification gap a review caught: an
+// earlier revision's isIncidentPolicy only ever excluded
+// slaPolicyCaseFieldMarkers, never slaPolicySkipFieldMarkers' own
+// escalation-only entries (escalation_severity/source_table/
+// active_escalation) despite its own doc comment claiming otherwise -- a
+// hypothetical escalation row that also happened to carry "business_service"
+// would have been misclassified as a genuine incident policy and reached
+// RegisterIncidentClocks.
+func TestIsIncidentPolicy_EscalationMarkerAlongsideBusinessServiceIsExcluded(t *testing.T) {
+	for _, marker := range []string{"escalation_severity", "source_table", "active_escalation"} {
+		t.Run(marker, func(t *testing.T) {
+			conditions := "business_service=aaaa^" + marker + "=1"
+			if isIncidentPolicy(conditions) {
+				t.Errorf("isIncidentPolicy(%q) = true, want false: a %q marker must exclude a row even with business_service present", conditions, marker)
+			}
+		})
+	}
+}
+
+func TestIsIncidentPolicy_BusinessServiceAndCategoryAloneStillMatch(t *testing.T) {
+	// The real "Cloud Incident - High Priority" row's own shape: this must
+	// keep matching -- it is NOT excluded by slaPolicySkipFieldMarkers'
+	// "category=" entry, which is why isIncidentPolicy can't reuse that list
+	// wholesale the way an earlier revision's doc comment incorrectly
+	// claimed it did.
+	if !isIncidentPolicy(realCloudIncidentStartCondition) {
+		t.Errorf("isIncidentPolicy(%q) = false, want true", realCloudIncidentStartCondition)
+	}
+}
+
+// TestIncidentService_UpdateIncident_NotesOnlyDoesNotReviseSLAClocks is the
+// regression test for a real, confirmed bug a review caught: `before` is
+// only fetched when the request has a lifecycle or record change, so a
+// notes-only (WorkNotes/AdditionalComments) update left it zero-valued --
+// and the SLA block's priority-change comparison, with no gate on whether a
+// baseline was actually read, then read that zero-valued "" as "priority
+// changed" against the freshly re-fetched view's real priority, cancelling
+// and restarting a live RESOLUTION clock on every single work note.
+func TestIncidentService_UpdateIncident_NotesOnlyDoesNotReviseSLAClocks(t *testing.T) {
+	priority := "CRITICAL"
+	repo := &stubIncidentRepo{
+		createIncidentComment: func(_ context.Context, incidentID string, commentType domain.CommentType, content, createdBy string) (domain.CaseComment, error) {
+			return domain.CaseComment{ID: "comment-1", CaseID: incidentID, Type: commentType, Content: content}, nil
+		},
+		getIncidentByID: func(_ context.Context, id string) (domain.IncidentView, error) {
+			return domain.IncidentView{ID: &id, Priority: &priority}, nil
+		},
+	}
+	slaEngine := &fakeSLAEngineService{}
+	svc := WithIncidentSLAEngine(
+		NewIncidentServiceWithPublisher(repo, stubUpdateIncidentUserRepo{email: "jane.doe@example.com"}, nil),
+		slaEngine,
+	)
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	workNotes := "investigating the repeat alert"
+	if _, err := svc.UpdateIncident(ctx, domain.UpdateIncidentRequest{ID: testDeploymentUUID, WorkNotes: &workNotes}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(slaEngine.reviseIncidentCalls) != 0 {
+		t.Errorf("reviseIncidentCalls = %v, want none: a notes-only update must never revise SLA clocks", slaEngine.reviseIncidentCalls)
+	}
+}
+
+// TestSNIncidentService_UpdateIncident_NonEscalationUpdateDoesNotReviseSLAClocks
+// is sn_incident_service.go's own counterpart to the notes-only regression
+// above: its pre-PATCH baseline is only fetched when
+// incidentUpdateTouchesEscalation(req) is true, so a Subject-only PATCH (no
+// state/priority/impact/urgency/assignee) skips it, leaving before.ID nil --
+// without the before.ID != nil gate, comparing that zero-valued priority
+// against the PATCH response's real one read as "changed" and revised a
+// live clock for a plain subject edit.
+func TestSNIncidentService_UpdateIncident_NonEscalationUpdateDoesNotReviseSLAClocks(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/incidents/"+testIncidentSysid, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Incident updated successfully.",
+			"incident": {
+				"id": "` + testIncidentSysid + `", "number": "INC0001",
+				"createdOn": "2026-01-01 00:00:00", "createdBy": "engineer@example.com",
+				"priority": {"id": 1, "label": "Critical"}
+			}
+		}`))
+	})
+
+	slaEngine := &fakeSLAEngineService{}
+	svc := WithIncidentSLAEngine(NewServiceNowIncidentService(newTestSNClient(t, mux), nil), slaEngine)
+
+	subject := "Updated subject text"
+	if _, err := svc.UpdateIncident(contextWithUserIDToken("token"), domain.UpdateIncidentRequest{
+		ID:      testIncidentUUID,
+		Subject: &subject,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(slaEngine.reviseIncidentCalls) != 0 {
+		t.Errorf("reviseIncidentCalls = %v, want none: a non-escalation update must never revise SLA clocks", slaEngine.reviseIncidentCalls)
 	}
 }

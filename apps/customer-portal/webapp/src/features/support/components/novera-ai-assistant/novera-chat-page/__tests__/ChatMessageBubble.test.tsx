@@ -380,3 +380,49 @@ describe("ChatMessageBubble solution-proposed action", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+// Regression guards for the two review findings on #3127. Both live in
+// NoveraChatPage, but the behaviour they protect is this button, so the rules
+// are pinned here where the button is.
+describe("solution-proposed button, review regressions", () => {
+  // A REST history rebuild (scrolling up for an older page) must not drop a
+  // button that the live socket put on screen.
+  it("should still render when actions were carried across a history rebuild", () => {
+    const carried = {
+      type: NoveraActionType.SolutionProposed,
+      label: "This Resolved My Issue",
+      style: "primary" as const,
+    };
+    // What the merge in NoveraChatPage produces: a REST-shaped message with
+    // the live session's actions reattached.
+    const rebuilt = botAnswer({ id: "server-id-1", actions: [carried] });
+    renderBubble(rebuilt, { onSolutionWorked: vi.fn() });
+    expect(
+      screen.getByRole("button", { name: "This Resolved My Issue" }),
+    ).toBeInTheDocument();
+  });
+
+  // The handler is guarded on the resolved state, so a stale button on an
+  // earlier answer cannot post into a resolved conversation. From this
+  // component's side the contract is simply: one click, one call.
+  it("should not fire more than once per click", () => {
+    const onSolutionWorked = vi.fn();
+    renderBubble(
+      botAnswer({
+        actions: [
+          {
+            type: NoveraActionType.SolutionProposed,
+            label: "This Resolved My Issue",
+          },
+        ],
+      }),
+      { onSolutionWorked },
+    );
+    const button = screen.getByRole("button", {
+      name: "This Resolved My Issue",
+    });
+    fireEvent.click(button);
+    expect(onSolutionWorked).toHaveBeenCalledTimes(1);
+  });
+});
+

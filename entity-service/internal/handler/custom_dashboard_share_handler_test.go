@@ -115,7 +115,7 @@ func TestCustomDashboardShareHandler_OwnerSide(t *testing.T) {
 func TestCustomDashboardShareHandler_RecipientSide(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		svc := &stubCustomDashboardShareService{sharedList: domain.SharedCustomDashboardList{
-			Dashboards: []domain.SharedCustomDashboardSummary{{ID: "d1", Name: "SLA", Owner: domain.UserReference{Name: "Jane Doe"}}},
+			Dashboards: []domain.SharedCustomDashboardSummary{{ID: "d1", Name: "SLA", Owner: &domain.UserReference{Name: "Jane Doe"}}},
 		}}
 		rec := serveShare(svc, http.MethodGet, "/users/me/shared-dashboards")
 		var got domain.SharedCustomDashboardList

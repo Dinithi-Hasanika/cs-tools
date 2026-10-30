@@ -149,14 +149,14 @@ type sharedDashboardListResponse struct {
 }
 
 // sharedDashboardResponse is the body of GET /dashboards/shared/{id}: the
-// dashboard in the GET /dashboards/{dashboardId} shape, who shared it, when,
-// and when its owner last changed it.
+// dashboard in the GET /dashboards/{dashboardId} shape, who shared it (nil once
+// the owner's user has been deleted), when, and when its owner last changed it.
 type sharedDashboardResponse struct {
-	Dashboard     dashboardDetailView          `json:"dashboard"`
-	Owner         entity.CustomDashboardPerson `json:"owner"`
-	SharedViaTeam *entity.CustomDashboardTeam  `json:"sharedViaTeam"`
-	SharedOn      string                       `json:"sharedOn"`
-	UpdatedOn     string                       `json:"updatedOn"`
+	Dashboard     dashboardDetailView           `json:"dashboard"`
+	Owner         *entity.CustomDashboardPerson `json:"owner"`
+	SharedViaTeam *entity.CustomDashboardTeam   `json:"sharedViaTeam"`
+	SharedOn      string                        `json:"sharedOn"`
+	UpdatedOn     string                        `json:"updatedOn"`
 }
 
 // customDashboardTeamShareTeam is a team a dashboard is shared with, as the

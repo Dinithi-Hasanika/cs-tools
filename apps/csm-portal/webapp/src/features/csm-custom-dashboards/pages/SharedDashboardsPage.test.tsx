@@ -22,7 +22,7 @@ import "@testing-library/jest-dom/vitest";
 interface Summary {
   id: string;
   name: string;
-  owner: { id: string | null; email: string; name: string };
+  owner: { id: string | null; email: string; name: string } | null;
   sharedViaTeam: { id: string; name: string; type: string } | null;
   sharedOn: string;
   updatedOn: string;
@@ -139,6 +139,15 @@ describe("SharedDashboardsPage", () => {
       .filter((o) => !o.contains(box) && o.getAttribute("aria-disabled") !== "true")
       .map((o) => o.textContent);
     expect(visible).toEqual(["AlphaShared with your team Rigel by Jane Doe"]);
+  });
+
+  it("names a former user when the owner's user has been deleted", () => {
+    listState = { data: [{ ...A, owner: null }, { ...B, owner: null, sharedViaTeam: rigel }] };
+    renderAt(`/dashboard/shared/${A.id}`);
+    expect(screen.getByText(/Alpha · Shared by a former user/)).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Select dashboard" }));
+    expect(screen.getByText("Shared with your team Rigel by a former user")).toBeInTheDocument();
   });
 
   it("opens a dashboard picked in the switcher", () => {

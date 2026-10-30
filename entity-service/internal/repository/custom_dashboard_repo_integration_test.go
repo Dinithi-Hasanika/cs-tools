@@ -55,7 +55,12 @@ func newCustomDashboardIntegrationPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	clean := func() {
-		// custom_dashboard rows cascade with their owners.
+		// Dashboards first: a shared one outlives its owner (migration 0255),
+		// and an earlier run may have left the fixture ids with no owner.
+		if _, err := pool.Exec(ctx, `DELETE FROM custom_dashboard WHERE owner_user_id = ANY($1::uuid[]) OR id = ANY($2::uuid[])`,
+			[]string{cdbOwnerA, cdbOwnerB}, []string{cdbDashboard1, cdbDashboard2}); err != nil {
+			t.Fatalf("clean dashboards: %v", err)
+		}
 		if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE id = ANY($1::uuid[])`,
 			[]string{cdbOwnerA, cdbOwnerB}); err != nil {
 			t.Fatalf("clean users: %v", err)

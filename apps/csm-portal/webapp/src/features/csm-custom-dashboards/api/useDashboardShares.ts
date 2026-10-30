@@ -56,7 +56,8 @@ export interface SharedViaTeam {
 export interface SharedDashboardSummary {
   id: string;
   name: string;
-  owner: DashboardPerson;
+  /** Who shared it (its owner); `null` once that user has been deleted. */
+  owner: DashboardPerson | null;
   /** The caller's team it was shared with; `null` when shared with the caller directly. */
   sharedViaTeam: SharedViaTeam | null;
   sharedOn: string;
@@ -75,7 +76,8 @@ interface SharedDashboardList {
  */
 export interface SharedDashboard {
   dashboard: BeDashboard;
-  owner: DashboardPerson;
+  /** Who shared it (its owner); `null` once that user has been deleted. */
+  owner: DashboardPerson | null;
   /** The caller's team it was shared with; `null` when shared with the caller directly. */
   sharedViaTeam: SharedViaTeam | null;
   sharedOn: string;

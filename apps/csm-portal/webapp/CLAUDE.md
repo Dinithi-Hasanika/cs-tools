@@ -124,6 +124,35 @@ failed role(s) still checked for a quick retry rather than clearing the whole fo
 ever renders for a wso2.com-email target (`showCsmPlatformRoles`) — same gating as "CSM Platform roles"
 itself, since a non-wso2.com account can't hold an Asgardeo-backed portal role in the first place.
 
+## `useRouteTabs`: must read `PortalAccess`/Feature Preview itself, not rely on its caller to
+
+`useSectionTabs.ts`'s shared `tabsFor` helper used to call `visibleNavChildren(section)`/`featureState(node.id)`
+with **no `access` and no Feature Preview overrides at all** — not even for `useRouteTabs`, the flavour behind
+every route-backed tab strip (Customers, Settings, Dashboards, Knowledge). A `requires`-gated tab (e.g.
+`dashboard.my`, `requires: "canWrite"`) was therefore dropped from `allTabs.tabs` purely on the deployment's
+`CSM_PORTAL_FEATURE_OVERRIDES` state, before any capability check or admin preview promotion ever ran — so
+marking a tab `"hidden"` to preview it later (the intended Feature Preview workflow) silently never worked:
+an admin who switched it on in their own Feature Preview dialog still couldn't see it, because the tab was
+excluded one layer up, inside `tabsFor` itself, before `CsmDashboardsLayout`'s own (separate, and in practice
+redundant) capability filter ever ran. Reported live as "I enabled it in Feature Preview but still can't see
+it". Fixed by having `useRouteTabs` read `usePortalAccess()`/`useFeaturePreviewOverrides(useSafeCurrentUserId())`
+itself (mirroring how `CsmSideBar.tsx`/`QuickNav.tsx` already do it) and thread both into `tabsFor`, which now
+also exposes `isPreviewedOnly` (`featureFlags.ts`) so each resolved `SectionTab` carries `previewedOnly: boolean`.
+`CsmDashboardsLayout.tsx` was simplified in the same change — its own post-filter re-deriving `activeKey` is
+now redundant, since `useRouteTabs` already returns the fully-resolved, capability-and-preview-aware list.
+
+**Deliberately scoped to `useRouteTabs` only** — `useQueryTabs`/`usePathSectionTabs` (Operations, Security
+Center) still resolve tabs from `CSM_PORTAL_FEATURE_OVERRIDES` alone, with no `access`/preview wiring, same as
+before this fix. Operations/Security Center have no `requires`-gated child tabs today, so this wasn't a live
+bug there yet — widening it to those two flavours too, if they ever need it, is a separate, deliberate change,
+not an oversight.
+
+**A tab visible only via an admin's own Feature Preview toggle now gets a distinct, filled "Preview" chip**
+(`SectionTabs.tsx`, `tab.previewedOnly`) — solid/colourful (`color="secondary" variant="filled"`), deliberately
+different from the WIP tab's outlined `color="warning"` chip, so an admin previewing a still-restricted feature
+is never left thinking "I can see this" means "this shipped for everyone." The tab itself stays fully enabled
+and clickable (unlike a WIP tab, which is `disabled`) — only the chip marks it as preview-only.
+
 ## Code organization
 
 Feature-based: each `src/features/<name>/` folder owns its own `api/` (React Query hooks), `components/`, `pages/`, `types/`, `utils/`. Tests are colocated as `<File>.test.tsx` next to the file under test, not in a separate `__tests__` tree.

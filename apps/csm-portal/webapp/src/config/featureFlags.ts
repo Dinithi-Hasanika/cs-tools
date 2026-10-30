@@ -573,3 +573,23 @@ export function listPreviewableFeatures(access?: PortalAccess): CsmNavNode[] {
     return state === "hidden" || state === "wip";
   });
 }
+
+/**
+ * True when `id` is visible to the signed-in admin right now ONLY because of
+ * their own Feature Preview toggle — this deployment's own
+ * `CSM_PORTAL_FEATURE_OVERRIDES` still restricts it (`hidden`/`wip`) for
+ * everyone else. Lets a previewed nav element be marked as such wherever it
+ * renders, so "I can see this" is never mistaken for "this is live".
+ *
+ * Reuses {@link listPreviewableFeatures}'s own definition of "restricted" (its
+ * state ignoring any preview override) rather than re-deriving it, so the two
+ * never disagree about which nodes are preview candidates.
+ */
+export function isPreviewedOnly(
+  id: string,
+  access?: PortalAccess,
+  previewOverrides?: Record<string, boolean>,
+): boolean {
+  if (!access?.isAdmin || previewOverrides?.[id] !== true) return false;
+  return listPreviewableFeatures(access).some((node) => node.id === id);
+}

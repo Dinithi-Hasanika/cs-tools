@@ -798,6 +798,11 @@ acknowledged and ignored). Code: `internal/service/salesforce_opportunity_ingest
   **Never written:** `type`, `owner`, `engagement_code`, `query_hour_state`
   (ServiceNow-derived; `TestSfOpportunitySQL_NeverTouchesServiceNowColumns` pins the
   column lists). Values longer than their VARCHAR (migration 0080) are truncated and logged.
+  Migration 0254 widened the line-item columns to fit the upstream field lengths:
+  `eng_product_code`, `product_name` and `product_code` are VARCHAR(255) (`eng_product_code`
+  is a comma-separated list of product abbreviations and runs past 200 characters) and
+  `product_description` is TEXT, never truncated. `product_unit`, `classification` and
+  `environment` stay VARCHAR(40).
 - **Line items (derived path):** the embedded `subscriptionLineItems` replace the
   opportunity's `sf_opportunity_product` rows as a set, in the same transaction:
   update by `line_item_sf_id` (else insert), then delete the rows under this
@@ -928,7 +933,8 @@ the linked-opportunity, invoice and line-item families).
   opportunity is re-ingested at its current version — then one
   transaction under `"sf-invoice:"+sfId`: update every `sf_invoice` row with the `sf_id`,
   else insert, plus the SUCCEEDED ledger row. Every data column is written (`name`,
-  `description`, `classification` — VARCHAR(40), truncated with a warning —
+  `description`, `classification` — VARCHAR(80), VARCHAR(255) and VARCHAR(40) since
+  migration 0254, truncated with a warning —
   `opportunity_id`, `invoiced_amount`, `invoice_date`, `invoiced_due_date`,
   `original_invoice_due_date` = `originalInvoiceDueDate ?? dueDate`, `invoiced_paid_date`,
   `service_start_date`, `service_end_date`, `sync_time_stamp`). An invoice with no

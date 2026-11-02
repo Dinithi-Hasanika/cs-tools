@@ -546,8 +546,8 @@ func main() {
 	// Opening a link is PermView like reading a share: anyone a link can
 	// reach (any internal user) can open it. The link id is in the body.
 	route("POST /dashboards/shared/link", handler.PermView, customDashboardHandler.OpenDashboardLink)
-	route("GET /updates/product-update-levels", handler.PermTimeCardsAndUpdates, updatesHandler.GetProductUpdateLevels)
-	route("POST /updates/levels/search", handler.PermTimeCardsAndUpdates, updatesHandler.SearchUpdatesBetweenUpdateLevels)
+	route("GET /updates/product-update-levels", handler.PermViewUpdates, updatesHandler.GetProductUpdateLevels)
+	route("POST /updates/levels/search", handler.PermViewUpdates, updatesHandler.SearchUpdatesBetweenUpdateLevels)
 	route("GET /users/me", handler.PermAuthenticated, usersHandler.GetMe)
 	route("PATCH /users/me", handler.PermAuthenticated, usersHandler.PatchMe)
 	route("GET /users/me/saved-filter-views", handler.PermAuthenticated, usersHandler.ListSavedFilterViews)

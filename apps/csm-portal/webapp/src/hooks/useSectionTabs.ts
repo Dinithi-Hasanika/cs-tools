@@ -24,7 +24,11 @@
  * Security Center links — see `usePathSectionTabs`), `usePathSectionTabs` for
  * a section whose tab strip is itself a real path segment (Operations,
  * Security Center), and `useRouteTabs` for sections whose tabs are child
- * routes with their own nested layout (Customers, Settings).
+ * routes with their own nested layout (Customers, Settings, Dashboards,
+ * Knowledge). Only `useRouteTabs` currently reads `PortalAccess`/Feature
+ * Preview itself (see its own doc comment) — `useQueryTabs`/
+ * `usePathSectionTabs` resolve tabs from the deployment's
+ * `CSM_PORTAL_FEATURE_OVERRIDES` state alone, same as before.
  *
  * A detail page's own static tab strip (Case/Incident/Change Request/Project
  * detail — not driven by the nav tree at all, just a caller-supplied list) is
@@ -42,10 +46,14 @@ import {
   type FeatureState,
   enabledNavChildren,
   featureState,
+  isPreviewedOnly,
   visibleNavChildren,
 } from "@config/featureFlags";
+import { useFeaturePreviewOverrides } from "@config/featurePreview";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
+import type { PortalAccess } from "@context/current-user/portalAccess";
+import { usePortalAccess, useSafeCurrentUserId } from "@context/current-user/usePortalAccess";
 
 /** One rendered tab: the nav node plus the state that decides how it looks. */
 export interface SectionTab {
@@ -54,6 +62,13 @@ export interface SectionTab {
   label: string;
   state: FeatureState;
   node: CsmNavNode;
+  /**
+   * True when this tab is visible right now only because the signed-in admin
+   * switched it on in their own Feature Preview dialog — everyone else still
+   * has it hidden/WIP. `SectionTabs` renders a distinct chip for this, so a
+   * previewing admin is never left thinking a restricted feature has shipped.
+   */
+  previewedOnly: boolean;
 }
 
 export interface SectionTabsState {
@@ -83,14 +98,17 @@ function resolveActiveKey(tabs: SectionTab[], requested: string | null): string 
 function tabsFor(
   sectionId: string,
   keyOf: (node: CsmNavNode) => string,
+  access?: PortalAccess,
+  previewOverrides?: Record<string, boolean>,
 ): SectionTab[] {
   const section = navNodeById(sectionId);
   if (!section) return [];
-  return visibleNavChildren(section).map((node) => ({
+  return visibleNavChildren(section, access, previewOverrides).map((node) => ({
     key: keyOf(node),
     label: node.label,
-    state: featureState(node.id),
+    state: featureState(node.id, access, previewOverrides),
     node,
+    previewedOnly: isPreviewedOnly(node.id, access, previewOverrides),
   }));
 }
 
@@ -192,11 +210,21 @@ export function routeTabForPath(
   return best;
 }
 
-/** Tab strip for a section whose tabs are child routes. */
+/**
+ * Tab strip for a section whose tabs are child routes. Unlike
+ * `useQueryTabs`/`usePathSectionTabs`, this reads the signed-in user's
+ * `PortalAccess` and Feature Preview overrides directly (mirroring
+ * `CsmSideBar`/`QuickNav`'s own wiring), so a tab's own `requires` capability
+ * and an admin's preview toggle are both honoured here — a route-tab section
+ * (Customers, Settings, Dashboards, Knowledge) is where a caller's capability
+ * actually decides what they can open, not just what the deployment allows.
+ */
 export function useRouteTabs(sectionId: string): SectionTabsState {
   const { pathname } = useLocation();
   const navigate = useNavTransition();
-  const tabs = tabsFor(sectionId, (node) => navNodePath(node));
+  const access = usePortalAccess();
+  const { overrides: previewOverrides } = useFeaturePreviewOverrides(useSafeCurrentUserId());
+  const tabs = tabsFor(sectionId, (node) => navNodePath(node), access, previewOverrides);
 
   const current = routeTabForPath(tabs, pathname);
   const activeKey = resolveActiveKey(tabs, current?.key ?? null);

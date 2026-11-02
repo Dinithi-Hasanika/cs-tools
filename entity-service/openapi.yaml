@@ -956,6 +956,22 @@ paths:
           schema:
             type: string
             enum: [csm, servicenow]
+        - name: admin
+          in: query
+          description: >-
+            Optional, default false. true additionally requires the caller
+            to hold a CSM admin role (AUTH_ADMIN_ROLES) on top of the
+            ordinary internal-caller requirement below -- this is what the
+            CSM portal's "Recalculate SLA" admin page sends to show which
+            clocks are currently running, typically right after
+            POST /sla-engine/recalculate. Any other value, or omitting it
+            entirely, is the ordinary internal-caller request every other
+            caller (integrations/csm-notification-service's own startup
+            reconciliation included) already makes, unaffected by this
+            parameter's existence.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Every currently-active SLA clock, paginated.
@@ -965,6 +981,18 @@ paths:
                 $ref: '#/components/schemas/SearchSLAStatusResponse'
         "400":
           description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No valid token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not an internal caller, or (admin=true) not a CSM admin.
           content:
             application/json:
               schema:
@@ -1025,6 +1053,46 @@ paths:
                 $ref: '#/components/schemas/SLAClockState'
         "400":
           description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sla-engine/recalculate:
+    post:
+      summary: >-
+        The CSM portal's "Recalculate SLA" admin action. Publishes a request
+        for integrations/csm-notification-service to rebuild its own
+        Redis-held SLA tracking from this service's durable record — for
+        recovering from a Redis state that no longer agrees with reality
+        (e.g. after a bulk resync of the underlying case/incident data). A
+        CSM admin (AUTH_ADMIN_ROLES) action; no request body.
+      operationId: requestSLARecalculation
+      responses:
+        "204":
+          description: >-
+            The request was published. The actual Redis rebuild happens
+            asynchronously — a 204 here means "requested", not "done".
+        "401":
+          description: No valid token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not a CSM admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: SLA recalculation is not available in this deployment (Event Hub publishing is not configured).
           content:
             application/json:
               schema:
@@ -27650,6 +27718,22 @@ components:
             not group ids. On the ServiceNow data source the set is built from
             ServiceNow's services (whose list carries no group's active flag)
             and matched, sorted by name and paged by this service.
+        incidentExtraGroupsOnly:
+          type: boolean
+          default: false
+          description: >-
+            true limits the result to the active groups the deployment has
+            configured as extra assignable groups for incidents (for example a
+            security operations group). These are the active allowlisted
+            groups, which may include a group that is also a service's support
+            group, so the result can overlap supportGroupsOnly results.
+            searchQuery and pagination apply, and total counts the matching
+            extra groups. The ids are group ids (what
+            assignmentGroupId takes). When no extra groups are configured the
+            result is empty, never every group. If supportGroupsOnly is also
+            true this filter wins and supportGroupsOnly is ignored. Other data
+            sources do not list these groups and return an empty result for
+            this filter.
 
     ScheduleZone:
       type: object
@@ -30256,7 +30340,7 @@ components:
           description: The WSO2 product the case is filed against.
         deployedProduct:
           type: string
-          description: The customer's deployment the case concerns; blank when none is named.
+          description: The case's product name and version, as the case detail page shows it (for example "Acme Gateway 1.2.0"); the version is left off when there is none, and the value is blank when the case has no product instance.
         etaSharedOn:
           type: string
           format: date-time
@@ -35997,6 +36081,18 @@ components:
             distinct from pauseDurationSeconds' own flat wall-clock total —
             needed to correct a business-day-scheduled clock's own wake-up
             schedule after a resume. Always 0 for a 24x7-scheduled clock.
+        assigneeName:
+          type: string
+          description: Mirrors SLAStatus.assigneeName. Empty when not resolvable.
+        assigneeEmail:
+          type: string
+          description: Mirrors SLAStatus.assigneeEmail. Empty when not resolvable.
+        teamEmail:
+          type: string
+          description: Mirrors SLAStatus.teamEmail. Empty when not resolvable.
+        teamLeadName:
+          type: string
+          description: Mirrors SLAStatus.teamLeadName. Empty when not resolvable.
 
     SLADurationPolicyItem:
       type: object

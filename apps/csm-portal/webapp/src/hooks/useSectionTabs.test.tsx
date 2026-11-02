@@ -34,6 +34,19 @@ import {
   type CaseRouteOverrideValue,
 } from "@context/case-tabs/CaseRouteOverrideContext";
 
+// `useRouteTabs` reads `usePortalAccess`/the signed-in user's id, which
+// transitively load the real `@api/backend/client`/`@config/apiConfig` --
+// mocked up front per this repo's own convention, even though no test here
+// cares about their real values (no `CurrentUserProvider` is rendered, so
+// `usePortalAccess` resolves to "no access", which the sections exercised
+// here -- none of whose tabs carry a `requires` -- are unaffected by).
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({ get: vi.fn(), post: vi.fn() }),
+}));
+vi.mock("@config/apiConfig", () => ({
+  apiConfig: { backendUrl: "https://example.test" },
+}));
+
 function setOverrides(value: unknown): void {
   window.config = {
     ...window.config,
@@ -165,7 +178,13 @@ describe("useRouteTabs", () => {
 });
 
 function routeTab(key: string): SectionTab {
-  return { key, label: key, state: "enabled", node: { id: key, label: key, href: key } };
+  return {
+    key,
+    label: key,
+    state: "enabled",
+    node: { id: key, label: key, href: key },
+    previewedOnly: false,
+  };
 }
 
 describe("routeTabForPath", () => {

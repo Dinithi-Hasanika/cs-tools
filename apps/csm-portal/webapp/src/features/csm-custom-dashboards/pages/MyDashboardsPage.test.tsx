@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -122,6 +122,26 @@ describe("MyDashboardsPage", () => {
     renderAt("/dashboard/my");
     expect(screen.getByText("You have no dashboards yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate Dashboard" })).toBeInTheDocument();
+  });
+
+  it("shows the code approach's button only when DASHBOARD_GENERATE_CODE_ENABLED is on", () => {
+    const original = window.config;
+    try {
+      for (const data of [[], [A, B]]) {
+        listState = { data };
+        window.config = { ...original, DASHBOARD_GENERATE_CODE_ENABLED: undefined };
+        renderAt("/dashboard/my");
+        expect(screen.queryByRole("button", { name: "Generate AI Code" })).not.toBeInTheDocument();
+        cleanup();
+
+        window.config = { ...original, DASHBOARD_GENERATE_CODE_ENABLED: true };
+        renderAt("/dashboard/my");
+        expect(screen.getByRole("button", { name: "Generate AI Code" })).toBeInTheDocument();
+        cleanup();
+      }
+    } finally {
+      window.config = original;
+    }
   });
 
   it("opens the first saved dashboard when the URL names none", () => {

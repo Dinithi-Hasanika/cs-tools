@@ -74,17 +74,27 @@ type dashboardGenerator interface {
 	Generate(ctx context.Context, req dashboards.Request) (dashboards.Result, error)
 }
 
-// DashboardHandler serves POST /ai/dashboards/generate.
+// codeGenerator is dashboards.CodeGenerator.
+type codeGenerator interface {
+	Generate(ctx context.Context, prompt, current string) (dashboards.CodeResult, error)
+}
+
+// DashboardHandler serves POST /ai/dashboards/generate and
+// /ai/dashboards/generate-code.
 type DashboardHandler struct {
-	generator dashboardGenerator // nil when no API key is configured
+	generator     dashboardGenerator // nil when no API key is configured
+	codeGenerator codeGenerator      // nil without a key or with the code approach off
 }
 
 // NewDashboardHandler returns the handler; a nil generator answers 503
-// not_configured.
-func NewDashboardHandler(generator *dashboards.Generator) *DashboardHandler {
+// not_configured on its route.
+func NewDashboardHandler(generator *dashboards.Generator, code *dashboards.CodeGenerator) *DashboardHandler {
 	h := &DashboardHandler{}
 	if generator != nil {
 		h.generator = generator
+	}
+	if code != nil {
+		h.codeGenerator = code
 	}
 	return h
 }
@@ -153,6 +163,71 @@ func (h *DashboardHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, generateResponse{
 		Declined:   res.Declined,
 		Candidates: res.Candidates,
+		Usage: usage{
+			InputTokens:              res.InputTokens,
+			CacheCreationInputTokens: res.CacheCreationInputTokens,
+			CacheReadInputTokens:     res.CacheReadInputTokens,
+			OutputTokens:             res.OutputTokens,
+		},
+	})
+}
+
+// generateCodeRequest is the body of POST /ai/dashboards/generate-code.
+// Current is the source being edited, absent or "" on a first message.
+type generateCodeRequest struct {
+	Prompt  string `json:"prompt"`
+	Current string `json:"current,omitempty"`
+}
+
+// generateCodeResponse is a 200: either the model's decline sentence, or the
+// code to run and the chat sentence to show with it.
+type generateCodeResponse struct {
+	Declined string `json:"declined,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Reply    string `json:"reply,omitempty"`
+	Usage    usage  `json:"usage"`
+}
+
+// GenerateCode makes one model call for one chat message of the code
+// approach. Statuses and codes are Generate's (no teams; "unusable" also
+// covers a reply with no usable code block):
+//
+//   - 200 {"source", "reply"} or {"declined": "<the model's sentence>"}
+//   - 400 invalid_request         the body, prompt, or a current source over
+//     dashboards.CodeMaxLength characters
+func (h *DashboardHandler) GenerateCode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if h.codeGenerator == nil {
+		writeError(w, http.StatusServiceUnavailable, CodeNotConfigured, "model calls are not configured")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var body generateCodeRequest
+	msg := decodeOne(r.Body, &body)
+	prompt := strings.TrimSpace(body.Prompt)
+	switch {
+	case msg != "":
+	case prompt == "":
+		msg = "prompt is required"
+	case utf8.RuneCountInString(prompt) > promptMaxLength:
+		msg = "prompt is over 2000 characters"
+	case utf8.RuneCountInString(body.Current) > dashboards.CodeMaxLength:
+		msg = "current is over 60000 characters"
+	}
+	if msg != "" {
+		slog.InfoContext(ctx, "dashboard generate-code: invalid request", "reason", msg)
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, msg)
+		return
+	}
+	res, err := h.codeGenerator.Generate(ctx, prompt, body.Current)
+	if err != nil {
+		writeGenerateError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, generateCodeResponse{
+		Declined: res.Declined,
+		Source:   res.Source,
+		Reply:    res.Reply,
 		Usage: usage{
 			InputTokens:              res.InputTokens,
 			CacheCreationInputTokens: res.CacheCreationInputTokens,

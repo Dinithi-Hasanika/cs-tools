@@ -37,6 +37,18 @@ func TestNewDashboardIsTheBuiltInCopy(t *testing.T) {
 	}
 }
 
+// TestNewCodeIsTheBuiltInCopy checks that the code catalogue is its own copy
+// built into the binary, not the dashboard one.
+func TestNewCodeIsTheBuiltInCopy(t *testing.T) {
+	if !strings.HasPrefix(CodeEmbedded(), "# CSM Portal code dashboard catalogue") {
+		first, _, _ := strings.Cut(CodeEmbedded(), "\n")
+		t.Errorf("built-in code catalogue starts with %q, want the code catalogue", first)
+	}
+	if NewCode().Text() != CodeEmbedded() {
+		t.Error("code Text() is not the built-in code catalogue")
+	}
+}
+
 // TestCatalogueListsTheProjectDateFilters checks that the project section names
 // every project query key and sort field, and that no rule still says a project
 // list sorts by the end date alone.

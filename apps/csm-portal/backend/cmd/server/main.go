@@ -424,8 +424,20 @@ func main() {
 	// Likewise an account (a customer's name or account number) becomes an
 	// accountId filter on the account's id.
 	dashboardGenerator = handler.WithDashboardAccounts(dashboardGenerator, customerEntityClient)
-	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator).
-		WithRateLimit(handler.NewGenerateRateLimiter(generateLimits.PerMinute, generateLimits.PerDay))
+	// One limiter for both approaches: a user's model calls count together.
+	generateLimiter := handler.NewGenerateRateLimiter(generateLimits.PerMinute, generateLimits.PerDay)
+	dashboardGenerateHandler := handler.NewDashboardGenerateHandler(dashboardGenerator).WithRateLimit(generateLimiter)
+	// The code approach (POST /dashboards/generate-code) is phase 2: off unless
+	// DASHBOARD_GENERATE_CODE_ENABLED is "true" (see loadGenerateCodeEnabled).
+	// Off, its handler is not built and its route not registered.
+	var dashboardGenerateCodeHandler *handler.DashboardGenerateCodeHandler
+	if loadGenerateCodeEnabled() {
+		codeDashboardGenerator := handler.NewSampleCodeDashboardGenerator()
+		if aiClient != nil {
+			codeDashboardGenerator = handler.NewServiceCodeDashboardGenerator(aiClient)
+		}
+		dashboardGenerateCodeHandler = handler.NewDashboardGenerateCodeHandler(codeDashboardGenerator).WithRateLimit(generateLimiter)
+	}
 	customDashboardHandler := handler.NewCustomDashboardHandler(customerEntityClient).WithTeams(dir.TeamResults())
 	caseHandler = caseHandler.WithAccessGuard(accessGuard)
 	projectHandler = projectHandler.WithAccessGuard(accessGuard)
@@ -535,6 +547,11 @@ func main() {
 	// A generated dashboard may hold PLG widgets; every PermWrite role also
 	// holds PermUsePlg (TestAccessGuard_DashboardWritersCanReadPlg).
 	route("POST /dashboards/generate", handler.PermWrite, dashboardGenerateHandler.GenerateDashboard)
+	// The code approach, same permission; registered only when
+	// DASHBOARD_GENERATE_CODE_ENABLED is on.
+	if dashboardGenerateCodeHandler != nil {
+		route("POST /dashboards/generate-code", handler.PermWrite, dashboardGenerateCodeHandler.GenerateCodeDashboard)
+	}
 	// My Dashboards: the caller's own saved dashboards, stored in entity-service.
 	// Same permission as generating one. "custom" is a literal segment, so it
 	// never collides with the {dashboardId} wildcard.
@@ -1383,6 +1400,27 @@ func validateAnnouncementDataSourceCompatibility(dataSource string, excludedProj
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
+}
+
+// generateCodeFlag is the env var gating POST /dashboards/generate-code, the
+// code approach to dashboard generation (phase 2). The AI integration service
+// and the webapp read the same name, so one value turns all three on.
+const generateCodeFlag = "DASHBOARD_GENERATE_CODE_ENABLED"
+
+// loadGenerateCodeEnabled resolves generateCodeFlag. Off by default: only
+// exactly "true" (whitespace trimmed) turns it on; "1", "TRUE" or "yes" leave
+// an unreleased feature off rather than on by accident.
+func loadGenerateCodeEnabled() bool {
+	enabled := generateCodeEnabled(os.Getenv(generateCodeFlag))
+	if enabled {
+		slog.Info(generateCodeFlag + " is on: POST /dashboards/generate-code is registered")
+	}
+	return enabled
+}
+
+// generateCodeEnabled is the pure parse behind loadGenerateCodeEnabled.
+func generateCodeEnabled(raw string) bool {
+	return strings.TrimSpace(raw) == "true"
 }
 
 // onboardingStatusFlag is the env var gating GET /projects/{id}/onboarding-steps.

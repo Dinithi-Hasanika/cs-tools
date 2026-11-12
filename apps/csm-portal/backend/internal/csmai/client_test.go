@@ -208,3 +208,45 @@ func TestHealth(t *testing.T) {
 		t.Errorf("down: err = %v", err)
 	}
 }
+
+func TestGenerateCodeSendsTheRequestAndReadsTheAnswer(t *testing.T) {
+	var got map[string]any
+	f := &fakeService{handle: func(w http.ResponseWriter, _ *http.Request, body []byte) {
+		_ = json.Unmarshal(body, &got)
+		_, _ = io.WriteString(w, `{"source":"async function render(portal, root) {}\n","reply":"Done.","usage":{"inputTokens":10,"cacheCreationInputTokens":30,"cacheReadInputTokens":40,"outputTokens":2}}`)
+	}}
+	ctx := middleware.WithUserInfo(withCorrelationID(t, "corr-9"), &middleware.UserInfo{Email: "someone@example.com", UserID: "user-42"})
+	res, err := newTestClient(t, f, 5*time.Second).GenerateCode(ctx, CodeRequest{Prompt: "Open cases", Current: "function render() {}"})
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+	if res.Source != "async function render(portal, root) {}\n" || res.Reply != "Done." || res.Declined != "" || res.Usage.CacheReadInputTokens != 40 {
+		t.Errorf("result = %+v", res)
+	}
+	if f.lastPath.Load() != "POST /ai/dashboards/generate-code" || f.lastAuth.Load() != "Bearer tok-1" || f.lastUser.Load() != "user-42" {
+		t.Errorf("request = %v, auth %v, user %v", f.lastPath.Load(), f.lastAuth.Load(), f.lastUser.Load())
+	}
+	if corr, _ := f.lastCorr.Load().(string); !strings.Contains(corr, "corr-9") {
+		t.Errorf("correlation id = %q, want the caller's", corr)
+	}
+	if got["prompt"] != "Open cases" || got["current"] != "function render() {}" || len(got) != 2 {
+		t.Errorf("body = %v, want exactly prompt and current", got)
+	}
+}
+
+func TestGenerateCodeLeavesOutAnEmptyCurrentAndKeepsAnError(t *testing.T) {
+	var raw string
+	f := &fakeService{handle: func(w http.ResponseWriter, _ *http.Request, body []byte) {
+		raw = string(body)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"code":"unusable","message":"x"}`)
+	}}
+	_, err := newTestClient(t, f, 5*time.Second).GenerateCode(context.Background(), CodeRequest{Prompt: "p"})
+	var se *Error
+	if !errors.As(err, &se) || se.StatusCode != http.StatusBadGateway || se.Code != CodeUnusable {
+		t.Fatalf("err = %v, want the service's 502 unusable", err)
+	}
+	if raw != `{"prompt":"p"}` {
+		t.Errorf("body = %s, want no current on a first message", raw)
+	}
+}

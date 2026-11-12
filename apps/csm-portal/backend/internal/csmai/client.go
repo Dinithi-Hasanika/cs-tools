@@ -178,6 +178,30 @@ func (c *Client) GenerateDashboard(ctx context.Context, req DashboardRequest) (D
 	return res, err
 }
 
+// CodeRequest is one chat message of the code approach. Current is the
+// source being edited, or "".
+type CodeRequest struct {
+	Prompt  string `json:"prompt"`
+	Current string `json:"current,omitempty"`
+}
+
+// CodeResult is the model's answer: its decline sentence, or the source and
+// the chat sentence.
+type CodeResult struct {
+	Declined string `json:"declined"`
+	Source   string `json:"source"`
+	Reply    string `json:"reply"`
+	Usage    Usage  `json:"usage"`
+}
+
+// GenerateCode makes one POST /ai/dashboards/generate-code (the code
+// approach; the service registers it only when it is turned on).
+func (c *Client) GenerateCode(ctx context.Context, req CodeRequest) (CodeResult, error) {
+	var res CodeResult
+	err := c.post(ctx, "/ai/dashboards/generate-code", req, &res)
+	return res, err
+}
+
 // Health calls the service's GET /health and returns an error unless it
 // answers 200.
 func (c *Client) Health(ctx context.Context) error {

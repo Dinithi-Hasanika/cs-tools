@@ -5017,6 +5017,105 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+  /dashboards/generate-code:
+    post:
+      summary: Generate a dashboard written as code from a chat message (phase 2).
+      description: >
+        **Off by default (phase 2):** registered only when the deployment sets
+        DASHBOARD_GENERATE_CODE_ENABLED to exactly "true"; otherwise a POST to
+        it answers 405 (the path still matches GET /dashboards/{dashboardId}).
+        The code approach's counterpart of POST /dashboards/generate: turns the
+        user's latest message on the code generate page into dashboard source
+        code (JavaScript defining `render(portal, root)`, which reads its data
+        through fixed portal APIs) plus a chat reply. The model (through
+        csm-ai-integration-service) writes the code from its own catalogue;
+        without that service configured, every valid request gets the same
+        sample source. Nothing is stored. CS engineers and admins only, and
+        counted against the same per-user generate limits as POST
+        /dashboards/generate. 400 when the prompt is missing, blank or over
+        2000 characters; 413 when `current` is over 60000 characters.
+        Generation failures map as on POST /dashboards/generate (422 the
+        request cannot be turned into a dashboard, with the reason; 502, 503
+        and 504 as there).
+      operationId: generateCodeDashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateCodeDashboardRequest'
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateCodeDashboardResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: PayloadTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "422":
+          description: UnprocessableEntity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "429":
+          description: Over the caller's generate limit (per minute or per 24 hours).
+          headers:
+            Retry-After:
+              description: Seconds until the caller may generate again.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "502":
+          description: BadGateway
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: ServiceUnavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "504":
+          description: GatewayTimeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
   /dashboards/custom:
     get:
       summary: List the caller's saved custom dashboards.
@@ -19196,6 +19295,40 @@ components:
             follow-up message can change it. Omitted for the first message.
           allOf:
             - $ref: '#/components/schemas/Dashboard'
+    GenerateCodeDashboardRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: >
+            The user's latest chat message, checked as on
+            POST /dashboards/generate.
+        current:
+          type: string
+          description: >
+            The source of the dashboard being edited (the previous reply's
+            source), so a follow-up message can change it. Omitted for the
+            first message. At most 60000 characters.
+          maxLength: 60000
+    GenerateCodeDashboardResponse:
+      type: object
+      required:
+        - source
+        - reply
+      properties:
+        source:
+          type: string
+          description: >
+            The dashboard as JavaScript source defining
+            `async function render(portal, root)`. It holds no data; it asks
+            for data through the fixed portal APIs each time it runs.
+        reply:
+          type: string
+          description: The chat message to show for this turn.
     GenerateDashboardResponse:
       type: object
       required:
